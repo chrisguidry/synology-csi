@@ -1035,34 +1035,17 @@ func (ns *nodeServer) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVo
 		return nil, status.Error(codes.InvalidArgument, "Invalid Argument")
 	}
 
-	k8sVolume, err := ns.dsmService.GetVolume(volumeId)
-	if err != nil {
-		return nil, status.Errorf(codes.Unavailable,
-			"Couldn't determine whether volume[%s] exists: %v", volumeId, err)
-	}
-	if k8sVolume == nil {
-		return nil, status.Error(codes.NotFound,
-			fmt.Sprintf("Volume[%s] is not found", volumeId))
-	}
-
+	// The stats come from the mount alone, with no DSM call. The kubelet
+	// asks once a minute for each mounted volume, and a DSM lookup lists every
+	// target and LUN, so asking the DSM made the node plugin's cost grow with
+	// the square of the volume count. statfs answers for every protocol: the
+	// DSM reports an NFS or SMB share's quota as the size of its filesystem.
 	notMount, err := mount.IsNotMountPoint(ns.Mounter.Interface, volumePath)
 	if err != nil || notMount {
 		return nil, status.Error(codes.NotFound,
 			fmt.Sprintf("Volume[%s] does not exist on the %s", volumeId, volumePath))
 	}
 
-	if k8sVolume.Protocol == utils.ProtocolSmb || k8sVolume.Protocol == utils.ProtocolNfs {
-		return &csi.NodeGetVolumeStatsResponse{
-			Usage: []*csi.VolumeUsage{
-				&csi.VolumeUsage{
-					Total: k8sVolume.SizeInBytes,
-					Unit:  csi.VolumeUsage_BYTES,
-				},
-			},
-		}, nil
-	}
-
-	// If we are dealing with a LUN use statfs
 	statfs := &unix.Statfs_t{}
 	err = unix.Statfs(volumePath, statfs)
 	if err != nil {
