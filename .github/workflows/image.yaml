@@ -28,7 +28,7 @@ jobs:
 
       # The tests run before the build, so a failing test never publishes.
       - name: Test
-        run: go test ./pkg/...
+        run: go test . ./pkg/...
 
       # The runtime stage runs apk for each platform, which needs an emulator
       # for arm64. The builder stage cross-compiles and does not.
