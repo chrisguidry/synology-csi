@@ -34,6 +34,7 @@ var (
 	multipathPath  = ""
 	multipathdPath = ""
 	nvmePath       = ""
+	blockdevPath   = ""
 )
 
 var rootCmd = &cobra.Command{
@@ -81,13 +82,7 @@ func driverStart() error {
 	defer dsmService.RemoveAllDsms()
 
 	// 2. Create command executor
-	cmdMap := map[string]string{
-		"iscsiadm":   iscsiadmPath,
-		"multipath":  multipathPath,
-		"multipathd": multipathdPath,
-		"nvme":       nvmePath,
-	}
-	cmdExecutor, err := hostexec.New(cmdMap, chrootDir)
+	cmdExecutor, err := hostexec.New(hostCommands(), chrootDir)
 	if err != nil {
 		log.Errorf("Failed to create command executor: %v", err)
 		return err
@@ -108,6 +103,20 @@ func driverStart() error {
 	<-c
 	log.Infof("Shutting down.")
 	return nil
+}
+
+// hostCommands maps each host command the driver runs to the path its flag
+// names. A command with a path runs as that path inside the chroot. A command
+// with no path runs through /usr/bin/env, which a host without /usr/bin does
+// not have.
+func hostCommands() map[string]string {
+	return map[string]string{
+		"iscsiadm":   iscsiadmPath,
+		"multipath":  multipathPath,
+		"multipathd": multipathdPath,
+		"nvme":       nvmePath,
+		"blockdev":   blockdevPath,
+	}
 }
 
 func main() {
@@ -133,6 +142,7 @@ func addFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVar(&multipathPath, "multipath-path", multipathPath, "Full path of multipath executable")
 	cmd.PersistentFlags().StringVar(&multipathdPath, "multipathd-path", multipathdPath, "Full path of multipathd executable")
 	cmd.PersistentFlags().StringVar(&nvmePath, "nvme-path", nvmePath, "Full path of nvme executable")
+	cmd.PersistentFlags().StringVar(&blockdevPath, "blockdev-path", blockdevPath, "Full path of blockdev executable")
 
 	cmd.MarkFlagRequired("endpoint")
 	cmd.MarkFlagRequired("client-info")
