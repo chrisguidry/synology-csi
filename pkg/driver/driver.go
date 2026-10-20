@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	DriverName    = "csi.san.synology.com" // CSI dirver name
+	DriverName    = "csi.san.synology.com" // the default CSI driver name
 	DriverVersion = "1.4.0"
 )
 
@@ -51,12 +51,15 @@ type Driver struct {
 	DsmService interfaces.IDsmService
 }
 
-func NewControllerAndNodeDriver(nodeID string, endpoint string, dsmService interfaces.IDsmService, tools tools) (*Driver, error) {
-	log.Debugf("NewControllerAndNodeDriver: DriverName: %v, DriverVersion: %v", DriverName, DriverVersion)
+// name is the CSI driver name the plugin registers under. Two copies of the
+// driver with different names run side by side on one cluster: the kubelet
+// gives each its own socket, and each serves only the PVs that name it.
+func NewControllerAndNodeDriver(name string, nodeID string, endpoint string, dsmService interfaces.IDsmService, tools tools) (*Driver, error) {
+	log.Debugf("NewControllerAndNodeDriver: DriverName: %v, DriverVersion: %v", name, DriverVersion)
 
 	// TODO version format and validation
 	d := &Driver{
-		name:       DriverName,
+		name:       name,
 		version:    DriverVersion,
 		nodeID:     nodeID,
 		endpoint:   endpoint,

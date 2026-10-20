@@ -22,6 +22,7 @@ import (
 var (
 	// CSI options
 	csiNodeID         = "CSINode"
+	csiDriverName     = driver.DriverName
 	csiEndpoint       = "unix:///var/lib/kubelet/plugins/" + driver.DriverName + "/csi.sock"
 	csiClientInfoPath = "/etc/synology/client-info.yml"
 	// Logging
@@ -95,7 +96,7 @@ func driverStart() error {
 	tools := driver.NewTools(cmdExecutor)
 
 	// 3. Create and Run the Driver
-	drv, err := driver.NewControllerAndNodeDriver(csiNodeID, csiEndpoint, dsmService, tools)
+	drv, err := driver.NewControllerAndNodeDriver(csiDriverName, csiNodeID, csiEndpoint, dsmService, tools)
 	if err != nil {
 		log.Errorf("Failed to create driver: %v", err)
 		return err
@@ -122,6 +123,7 @@ func main() {
 }
 
 func addFlags(cmd *cobra.Command) {
+	cmd.PersistentFlags().StringVar(&csiDriverName, "driver-name", csiDriverName, "CSI driver name to register under")
 	cmd.PersistentFlags().StringVar(&csiNodeID, "nodeid", csiNodeID, "Node ID")
 	cmd.PersistentFlags().StringVarP(&csiEndpoint, "endpoint", "e", csiEndpoint, "CSI endpoint")
 	cmd.PersistentFlags().StringVarP(&csiClientInfoPath, "client-info", "f", csiClientInfoPath, "Path of Synology config yaml file")
