@@ -2,7 +2,9 @@ name: Image
 
 # Builds the driver image and publishes it to ghcr.io. A pull request builds
 # the image and pushes nothing, so a broken Dockerfile fails before it merges.
-# A push to main publishes `main` and `sha-<commit>`; a tag publishes the tag.
+# A push to main publishes `main`, `sha-<commit>`, and
+# `<YYYYMMDD>-<HHMMSS>-<run_number>-<short_sha>`, the tag a Flux ImagePolicy
+# sorts on its timestamp. A git tag publishes the tag.
 on:
   push:
     branches: [main]
@@ -55,6 +57,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=sha
+            type=raw,value={{date 'YYYYMMDD-HHmmss' tz='UTC'}}-${{ github.run_number }}-{{sha}},enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v7.4.0
