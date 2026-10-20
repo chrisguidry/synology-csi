@@ -9,10 +9,12 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"regexp"
+	"sync"
 
 	"github.com/SynologyOpenSource/synology-csi/pkg/logger"
 	log "github.com/sirupsen/logrus"
@@ -30,6 +32,13 @@ type DSM struct {
 	TLSServerName      string
 	InsecureSkipVerify bool
 	SystemInfo
+
+	// One client for each DSM, so requests reuse its connections. A new
+	// client for each request costs a TCP connection and a TLS handshake,
+	// and a listing makes one request for each LUN.
+	clientOnce sync.Once
+	client     *http.Client
+	clientErr  error
 }
 
 type SystemInfo struct {
@@ -52,6 +61,13 @@ type Response struct {
 	ErrorCode  int
 	Success    bool
 	Data       interface{}
+}
+
+func (dsm *DSM) httpClient() (*http.Client, error) {
+	dsm.clientOnce.Do(func() {
+		dsm.client, dsm.clientErr = dsm.newHTTPClient()
+	})
+	return dsm.client, dsm.clientErr
 }
 
 func (dsm *DSM) newHTTPClient() (*http.Client, error) {
@@ -105,7 +121,7 @@ func (dsm *DSM) sendRequest(data string, apiTemplate interface{}, params url.Val
 }
 
 func (dsm *DSM) sendRequestWithoutConnectionCheck(data string, apiTemplate interface{}, params url.Values, cgiPath string) (Response, error) {
-	client, err := dsm.newHTTPClient()
+	client, err := dsm.httpClient()
 	if err != nil {
 		return Response{}, err
 	}
@@ -146,7 +162,12 @@ func (dsm *DSM) sendRequestWithoutConnectionCheck(data string, apiTemplate inter
 	if err != nil {
 		return Response{}, err
 	}
-	defer resp.Body.Close()
+	// The transport reuses a connection only when the body was read to the
+	// end, and the JSON decoder below stops before the trailing newline.
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	// For debug print text body
 	var bodyText []byte
