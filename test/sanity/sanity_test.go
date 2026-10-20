@@ -66,7 +66,7 @@ func TestSanity(t *testing.T) {
 	tools := driver.NewTools(cmdExecutor)
 
 	endpoint := "unix://" + endpointFile.Name()
-	drv, err := driver.NewControllerAndNodeDriver(nodeID, endpoint, dsmService, tools)
+	drv, err := driver.NewControllerAndNodeDriver(driver.DriverName, nodeID, endpoint, dsmService, tools)
 	if err != nil {
 		t.Fatal(fmt.Sprintf("Failed to create driver: %v\n", err))
 	}
