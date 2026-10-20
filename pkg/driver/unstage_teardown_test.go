@@ -4,10 +4,14 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"golang.org/x/sys/unix"
 	utilexec "k8s.io/utils/exec"
 	testingexec "k8s.io/utils/exec/testing"
 )
@@ -117,23 +121,31 @@ func TestLogoutSucceedsWhenTheRecordCannotBeRemoved(t *testing.T) {
 	}
 }
 
-func TestFlushWritesOutTheDeviceBeforeItGoesAway(t *testing.T) {
+// The flush runs in the plugin, so a host with no blockdev binary still gets
+// it. A regular file is not a block device, so the ioctl reaching it proves
+// the flush was attempted here and not handed to the host.
+func TestFlushRunsInThePluginWithNoHostCommand(t *testing.T) {
 	e := &recordingExecutor{}
 	tools := NewTools(e)
-
-	if err := tools.blockdev_flushbufs("/dev/sdx"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	notABlockDevice := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notABlockDevice, nil, 0600); err != nil {
+		t.Fatal(err)
 	}
-	if e.find("blockdev --flushbufs /dev/sdx") < 0 {
-		t.Errorf("expected the device to be flushed, ran: %v", e.ran)
+
+	err := tools.flushDeviceBuffers(notABlockDevice)
+
+	if !errors.Is(err, unix.ENOTTY) {
+		t.Errorf("flushing a regular file returned %v, want ENOTTY from the ioctl", err)
+	}
+	if len(e.ran) != 0 {
+		t.Errorf("expected no host command, ran: %v", e.ran)
 	}
 }
 
 func TestFlushReportsFailure(t *testing.T) {
-	e := &recordingExecutor{fail: "flushbufs"}
-	tools := NewTools(e)
+	tools := NewTools(&recordingExecutor{})
 
-	if err := tools.blockdev_flushbufs("/dev/sdx"); err == nil {
+	if err := tools.flushDeviceBuffers("/dev/no-such-device"); err == nil {
 		t.Error("expected an error when the flush fails; silently continuing to logout " +
 			"is what loses the writes still held in memory")
 	}

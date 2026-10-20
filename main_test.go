@@ -12,7 +12,6 @@ func TestPathFlagsNameTheHostCommands(t *testing.T) {
 		command string
 	}{
 		{"--iscsiadm-path=/sbin/iscsiadm", "iscsiadm"},
-		{"--blockdev-path=/sbin/blockdev", "blockdev"},
 	}
 	for _, c := range cases {
 		t.Run(c.command, func(t *testing.T) {

@@ -35,7 +35,6 @@ var (
 	multipathPath  = ""
 	multipathdPath = ""
 	nvmePath       = ""
-	blockdevPath   = ""
 )
 
 var rootCmd = &cobra.Command{
@@ -116,7 +115,6 @@ func hostCommands() map[string]string {
 		"multipath":  multipathPath,
 		"multipathd": multipathdPath,
 		"nvme":       nvmePath,
-		"blockdev":   blockdevPath,
 	}
 }
 
@@ -144,7 +142,6 @@ func addFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVar(&multipathPath, "multipath-path", multipathPath, "Full path of multipath executable")
 	cmd.PersistentFlags().StringVar(&multipathdPath, "multipathd-path", multipathdPath, "Full path of multipathd executable")
 	cmd.PersistentFlags().StringVar(&nvmePath, "nvme-path", nvmePath, "Full path of nvme executable")
-	cmd.PersistentFlags().StringVar(&blockdevPath, "blockdev-path", blockdevPath, "Full path of blockdev executable")
 
 	cmd.MarkFlagRequired("endpoint")
 	cmd.MarkFlagRequired("client-info")
