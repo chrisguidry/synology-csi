@@ -1038,8 +1038,8 @@ func (ns *nodeServer) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVo
 	// The stats come from the mount alone, with no DSM call. The kubelet
 	// asks once a minute for each mounted volume, and a DSM lookup lists every
 	// target and LUN, so asking the DSM made the node plugin's cost grow with
-	// the square of the volume count. statfs answers for every protocol: the
-	// DSM reports an NFS or SMB share's quota as the size of its filesystem.
+	// the square of the volume count. statfs answers for every protocol, and
+	// the DSM reports an NFS share's quota as the size of its filesystem.
 	notMount, err := mount.IsNotMountPoint(ns.Mounter.Interface, volumePath)
 	if err != nil || notMount {
 		return nil, status.Error(codes.NotFound,
