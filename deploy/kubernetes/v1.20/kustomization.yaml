@@ -1,0 +1,23 @@
+# A kustomize base for the driver: the namespace, the CSIDriver, the
+# controller, and the node plugin. It leaves out storage-class.yml, whose
+# StorageClass has no parameters and is the cluster owner's to write, and
+# snapshotter/, which needs the VolumeSnapshot CRDs installed first.
+#
+# The Image workflow publishes this directory as the OCI artifact
+# oci://ghcr.io/chrisguidry/synology-csi-deploy, one artifact for each
+# build, and sets newTag below to the image of the same build. Take the
+# artifact with an OCIRepository and a Flux Kustomization, and patch it
+# there for your own cluster.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yml
+  - csi-driver.yml
+  - controller.yml
+  - node.yml
+
+images:
+  - name: synology/synology-csi
+    newName: ghcr.io/chrisguidry/synology-csi
+    newTag: main

@@ -4,7 +4,10 @@ name: Image
 # the image and pushes nothing, so a broken Dockerfile fails before it merges.
 # A push to main publishes `main`, `sha-<commit>`, and
 # `<YYYYMMDD>-<HHMMSS>-<run_number>-<short_sha>`, the tag a Flux ImagePolicy
-# sorts on its timestamp. A git tag publishes the tag.
+# sorts on its timestamp. It then publishes deploy/kubernetes/v1.20 as the
+# OCI artifact synology-csi-deploy under that same tag, with newTag set to
+# it, so one tag pins the manifests and the image together. A git tag
+# publishes the tag.
 on:
   push:
     branches: [main]
@@ -22,6 +25,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+
+      - name: Build tag
+        id: build
+        run: echo "tag=$(date -u +%Y%m%d-%H%M%S)-${{ github.run_number }}-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
         uses: actions/setup-go@v7.0.0
@@ -57,7 +64,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=sha
-            type=raw,value={{date 'YYYYMMDD-HHmmss' tz='UTC'}}-${{ github.run_number }}-{{sha}},enable={{is_default_branch}}
+            type=raw,value=${{ steps.build.outputs.tag }},enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v7.4.0
@@ -71,3 +78,22 @@ jobs:
             IMAGE_VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Set up Flux
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: fluxcd/flux2/action@v2.9.5
+        with:
+          version: 2.9.5
+
+      # The deploy artifact goes after the image, because a cluster follows
+      # the artifact, and it must never name an image that is not pushed yet.
+      - name: Publish the deploy artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          BUILD: ${{ steps.build.outputs.tag }}
+        run: |
+          yq -i '(.images[] | select(.name == "synology/synology-csi")).newTag = strenv(BUILD)' deploy/kubernetes/v1.20/kustomization.yaml
+          flux push artifact "oci://ghcr.io/${{ github.repository_owner }}/synology-csi-deploy:$BUILD" \
+            --path deploy/kubernetes/v1.20 \
+            --source "${{ github.server_url }}/${{ github.repository }}" \
+            --revision "$BUILD@sha1:${{ github.sha }}"

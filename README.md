@@ -5,8 +5,10 @@
 > It builds its images on an Alpine base, so they build with no RHEL
 > subscription, and publishes them to
 > [ghcr.io/chrisguidry/synology-csi](https://github.com/chrisguidry/synology-csi/pkgs/container/synology-csi)
-> for linux/amd64 and linux/arm64. Fixes made here are offered upstream as
-> pull requests.
+> for linux/amd64 and linux/arm64. Each build on `main` also publishes
+> `deploy/kubernetes/v1.20` as the kustomize base
+> `oci://ghcr.io/chrisguidry/synology-csi-deploy`, under the same tag as its
+> image. Fixes made here are offered upstream as pull requests.
 
 The official [Container Storage Interface](https://github.com/container-storage-interface) driver for Synology NAS.
 
