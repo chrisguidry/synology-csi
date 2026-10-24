@@ -4,7 +4,7 @@
 # The builder runs on the build machine's own platform and cross-compiles.
 # The Makefile builds a static binary with CGO_ENABLED=0, and the RUN below
 # sets GOARCH and GOARM from TARGETPLATFORM, so no emulator runs the compiler.
-FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS builder
 LABEL stage=synobuilder
 
 RUN apk add --no-cache alpine-sdk
