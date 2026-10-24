@@ -4,7 +4,7 @@
 # The builder runs on the build machine's own platform and cross-compiles.
 # The Makefile builds a static binary with CGO_ENABLED=0, and the RUN below
 # sets GOARCH and GOARM from TARGETPLATFORM, so no emulator runs the compiler.
-FROM --platform=$BUILDPLATFORM golang:1.21.4-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS builder
 LABEL stage=synobuilder
 
 RUN apk add --no-cache alpine-sdk
@@ -40,7 +40,7 @@ LABEL name="synology-csi" \
 # packages decide which fsType values a StorageClass can use. Alpine publishes
 # every one of them, so the image builds with no RHEL subscription, and
 # btrfs-progs keeps fsType btrfs working.
-RUN apk add --no-cache e2fsprogs e2fsprogs-extra xfsprogs xfsprogs-extra blkid \
+RUN apk upgrade --no-cache && apk add --no-cache e2fsprogs e2fsprogs-extra xfsprogs xfsprogs-extra blkid \
         util-linux iproute2 bash btrfs-progs ca-certificates cifs-utils nfs-utils nvme-cli
 
 COPY LICENSE /licenses/LICENSE
