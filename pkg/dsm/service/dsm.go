@@ -5,8 +5,10 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/cenkalti/backoff/v4"
 	log "github.com/sirupsen/logrus"
@@ -22,6 +24,9 @@ import (
 )
 
 type DsmService struct {
+	// A DSM that comes up after the driver starts joins dsms from another
+	// goroutine while CSI calls read it, so every access holds mu.
+	mu   sync.RWMutex
 	dsms map[string]*webapi.DSM
 }
 
@@ -33,7 +38,7 @@ func NewDsmService() *DsmService {
 
 func (service *DsmService) AddDsm(client common.ClientInfo) error {
 	// TODO: use sn or other identifiers as key
-	if _, ok := service.dsms[client.Host]; ok {
+	if _, err := service.GetDsm(client.Host); err == nil {
 		log.Infof("Adding DSM [%s] already present.", client.Host)
 		return nil
 	}
@@ -56,13 +61,41 @@ func (service *DsmService) AddDsm(client common.ClientInfo) error {
 		return fmt.Errorf("Failed to get system info of DSM: [%s]. err: %v", dsm.Ip, err)
 	}
 
+	service.mu.Lock()
 	service.dsms[dsm.Ip] = dsm
+	service.mu.Unlock()
 	log.Infof("Add DSM [%s] hostname: %s.", dsm.Ip, dsm.Hostname)
 	return nil
 }
 
-func (service *DsmService) RemoveAllDsms() {
+// AddDsmWhenReachable retries AddDsm on the given schedule until it succeeds
+// or ctx ends. A DSM that is down when the driver starts would otherwise stay
+// out of the driver for the life of the process, and a controller replica
+// that later wins its leader election would fail every call for that DSM.
+// The DSM joins only after its login and its system info both succeed,
+// because its hostname names every iSCSI target.
+func (service *DsmService) AddDsmWhenReachable(ctx context.Context, client common.ClientInfo, schedule backoff.BackOff) error {
+	attempt := func() error { return service.AddDsm(client) }
+	notify := func(err error, wait time.Duration) {
+		log.Warnf("%v; trying again in %s", err, wait.Round(time.Second))
+	}
+	return backoff.RetryNotify(attempt, backoff.WithContext(schedule, ctx), notify)
+}
+
+// allDsms returns the DSMs at this moment, so a caller can make slow DSM
+// calls without holding mu.
+func (service *DsmService) allDsms() []*webapi.DSM {
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	dsms := make([]*webapi.DSM, 0, len(service.dsms))
 	for _, dsm := range service.dsms {
+		dsms = append(dsms, dsm)
+	}
+	return dsms
+}
+
+func (service *DsmService) RemoveAllDsms() {
+	for _, dsm := range service.allDsms() {
 		log.Infof("Going to logout DSM [%s]", dsm.Ip)
 
 		for i := 0; i < 3; i++ {
@@ -77,7 +110,9 @@ func (service *DsmService) RemoveAllDsms() {
 }
 
 func (service *DsmService) GetDsm(ip string) (*webapi.DSM, error) {
+	service.mu.RLock()
 	dsm, ok := service.dsms[ip]
+	service.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("Requested dsm [%s] does not exist", ip)
 	}
@@ -85,13 +120,15 @@ func (service *DsmService) GetDsm(ip string) (*webapi.DSM, error) {
 }
 
 func (service *DsmService) GetDsmsCount() int {
+	service.mu.RLock()
+	defer service.mu.RUnlock()
 	return len(service.dsms)
 }
 
 func (service *DsmService) ListDsmVolumes(ip string) ([]webapi.VolInfo, error) {
 	var allVolInfos []webapi.VolInfo
 
-	for _, dsm := range service.dsms {
+	for _, dsm := range service.allDsms() {
 		if ip != "" && dsm.Ip != ip {
 			continue
 		}
@@ -675,7 +712,7 @@ func (service *DsmService) CreateVolume(spec *models.CreateK8sVolumeSpec) (*mode
 	}
 
 	/* Find appropriate dsm to create volume */
-	for _, dsm := range service.dsms {
+	for _, dsm := range service.allDsms() {
 		if spec.DsmIp != "" && spec.DsmIp != dsm.Ip {
 			continue
 		}
@@ -785,7 +822,7 @@ func (service *DsmService) DeleteVolume(volId string) error {
 // the list is incomplete: some volume may exist without appearing here, so the
 // caller must not read an absence from it as proof that a volume is gone.
 func (service *DsmService) listISCSIVolumes(dsmIp string) (infos []*models.K8sVolumeRespSpec, listErr error) {
-	for _, dsm := range service.dsms {
+	for _, dsm := range service.allDsms() {
 		if dsmIp != "" && dsmIp != dsm.Ip {
 			continue
 		}
@@ -1137,7 +1174,7 @@ func (service *DsmService) listISCSISnapshotsByDsm(dsm *webapi.DSM) (infos []*mo
 func (service *DsmService) ListAllSnapshots() []*models.K8sSnapshotRespSpec {
 	var allInfos []*models.K8sSnapshotRespSpec
 
-	for _, dsm := range service.dsms {
+	for _, dsm := range service.allDsms() {
 		allInfos = append(allInfos, service.listISCSISnapshotsByDsm(dsm)...)
 		allInfos = append(allInfos, service.listSMBorNFSSnapshotsByDsm(dsm)...)
 		allInfos = append(allInfos, service.listNVMeSnapshotsByDsm(dsm)...)
@@ -1229,7 +1266,7 @@ func DsmSanSnapshotToK8sSnapshot(dsmIp string, info webapi.SnapshotInfo, protoco
 }
 
 func (service *DsmService) getISCSISnapshot(snapshotUuid string) *models.K8sSnapshotRespSpec {
-	for _, dsm := range service.dsms {
+	for _, dsm := range service.allDsms() {
 		snapshots := service.listISCSISnapshotsByDsm(dsm)
 		for _, snap := range snapshots {
 			if snap.Uuid == snapshotUuid {
