@@ -42,6 +42,10 @@ jobs:
           version: v0.76.1
           scan-type: fs
           scanners: vuln,misconfig,secret
+          # Only the manifests that ship in the deploy artifact. The v1.19
+          # manifests, the Helm chart, and the snapshotter are not
+          # published or maintained here.
+          skip-dirs: deploy/kubernetes/v1.19,deploy/helm,deploy/kubernetes/v1.20/snapshotter
           format: sarif
           output: trivy-repository.sarif
 
