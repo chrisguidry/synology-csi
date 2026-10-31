@@ -5,10 +5,13 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
@@ -73,10 +76,15 @@ func driverStart() error {
 		return err
 	}
 
+	// A DSM that cannot be reached now keeps being tried in the background,
+	// so the driver serves it once it comes up instead of never.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	for _, client := range info.Clients {
 		err := dsmService.AddDsm(client)
 		if err != nil {
 			log.Errorf("Failed to add DSM: %s, error: %v", client.Host, err)
+			go dsmService.AddDsmWhenReachable(ctx, client, dsmRetrySchedule())
 		}
 	}
 	defer dsmService.RemoveAllDsms()
@@ -103,6 +111,16 @@ func driverStart() error {
 	<-c
 	log.Infof("Shutting down.")
 	return nil
+}
+
+// dsmRetrySchedule waits 1s after the first failure and doubles up to a
+// minute between tries, and never gives up.
+func dsmRetrySchedule() backoff.BackOff {
+	schedule := backoff.NewExponentialBackOff()
+	schedule.InitialInterval = time.Second
+	schedule.MaxInterval = time.Minute
+	schedule.MaxElapsedTime = 0
+	return schedule
 }
 
 // hostCommands maps each host command the driver runs to the path its flag

@@ -66,14 +66,52 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 
 ---
-kind: StatefulSet
+# The sidecars elect one leader each through a Lease in this namespace.
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: synology-csi-controller-leader-election
+  namespace: synology-csi
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "watch", "list", "delete", "update", "create"]
+
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: synology-csi-controller-leader-election
+  namespace: synology-csi
+subjects:
+  - kind: ServiceAccount
+    name: csi-controller-sa
+    namespace: synology-csi
+roleRef:
+  kind: Role
+  name: synology-csi-controller-leader-election
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Two replicas on different nodes, with leader election in each sidecar, so
+# the controller survives a node that loses power. The standby takes each
+# Lease once it expires, 15-26 s after the leader's last renewal, and a
+# Deployment replaces a pod on a dead node without a force-delete. A
+# one-replica StatefulSet could not: it makes no replacement until the old
+# pod is gone, so a dead node stopped every attach in the cluster until
+# someone deleted the pod by hand.
+kind: Deployment
 apiVersion: apps/v1
 metadata:
   name: synology-csi-controller
   namespace: synology-csi
 spec:
-  serviceName: "synology-csi-controller"
-  replicas: 1
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: synology-csi-controller
@@ -83,7 +121,18 @@ spec:
         app: synology-csi-controller
     spec:
       serviceAccountName: csi-controller-sa
-      hostNetwork: true
+      # Each sidecar's leader identity is its hostname. On the host network
+      # that is the node's name, and two pods on one node would both hold
+      # the Lease. On the pod network it is the pod's name. The controller
+      # needs no host networking: it talks HTTPS to the DSM and gRPC over
+      # the socket below.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: synology-csi-controller
       containers:
         - name: csi-provisioner
           securityContext:
@@ -97,6 +146,7 @@ spec:
             - --csi-address=$(ADDRESS)
             - --v=5
             - --extra-create-metadata
+            - --leader-election
           env:
             - name: ADDRESS
               value: /var/lib/csi/sockets/pluginproxy/csi.sock
@@ -114,6 +164,7 @@ spec:
           args:
             - --v=5
             - --csi-address=$(ADDRESS)
+            - --leader-election
           env:
             - name: ADDRESS
               value: /var/lib/csi/sockets/pluginproxy/csi.sock
@@ -132,6 +183,7 @@ spec:
             - --v=5
             - --csi-address=$(ADDRESS)
             - --timeout=120s
+            - --leader-election
           env:
             - name: ADDRESS
               value: /var/lib/csi/sockets/pluginproxy/csi.sock
@@ -168,3 +220,19 @@ spec:
         - name: client-info
           secret:
             secretName: client-info-secret
+
+---
+# A drain takes one replica at a time, so the other keeps serving.
+# AlwaysAllow lets a drain evict a replica that is not Ready, which would
+# otherwise hold the budget at zero and block the node.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: synology-csi-controller
+  namespace: synology-csi
+spec:
+  maxUnavailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      app: synology-csi-controller
