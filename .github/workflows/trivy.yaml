@@ -1,0 +1,80 @@
+name: Trivy
+
+# Scans the repository and the published image, and reports what it finds to
+# code scanning. The repository scan reads go.mod for vulnerable modules, the
+# Dockerfile and the deploy manifests for misconfigurations, and every file
+# for secrets, on each push and pull request. The image scan reads the
+# packages in the `main` image after each publish, and again each week,
+# because new advisories reach an image that has not changed.
+#
+# Third-party actions are pinned to a commit, because a tag can be moved to
+# other code.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_run:
+    workflows: [Image]
+    branches: [main]
+    types: [completed]
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repository:
+    if: github.event_name != 'workflow_run'
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Scan the repository
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          scan-type: fs
+          scanners: vuln,misconfig,secret
+          format: sarif
+          output: trivy-repository.sarif
+
+      - name: Report to code scanning
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy-repository.sarif
+          category: trivy-repository
+
+  image:
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          image-ref: ghcr.io/${{ github.repository_owner }}/synology-csi:main
+          scanners: vuln
+          format: sarif
+          output: trivy-image.sarif
+
+      - name: Report to code scanning
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
