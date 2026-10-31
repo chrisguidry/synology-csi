@@ -46,6 +46,9 @@ jobs:
           # manifests, the Helm chart, and the snapshotter are not
           # published or maintained here.
           skip-dirs: deploy/kubernetes/v1.19,deploy/helm,deploy/kubernetes/v1.20/snapshotter
+          # Findings that are right about the manifests and wrong for this
+          # driver, each with its reason.
+          trivyignores: .trivyignore.yaml
           format: sarif
           output: trivy-repository.sarif
 

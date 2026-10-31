@@ -1,0 +1,98 @@
+# Findings Trivy reports that are correct about the manifests and wrong for
+# this driver. Each entry says why. The Trivy workflow reads this file, and
+# a finding that is not here fails nothing but shows in code scanning.
+
+misconfigurations:
+  - id: KSV-0011
+    statement: >-
+      No container sets a CPU limit. A limit throttles a container even on
+      an idle node, and a throttled sidecar misses its leader-election
+      renewals and its CSI deadlines. Each container requests CPU instead.
+
+  - id: KSV-0125
+    statement: >-
+      The sidecars come from registry.k8s.io, the Kubernetes project's own
+      registry, and the driver from ghcr.io/chrisguidry, which this
+      repository publishes. Trivy's list of trusted registries knows
+      neither.
+
+  - id: KSV-0041
+    paths:
+      - deploy/kubernetes/v1.20/controller.yml
+    statement: >-
+      The controller's sidecars read the provisioner, controller-publish, and
+      controller-expand secrets that a StorageClass names, in whatever
+      namespace it names, which a namespaced Role cannot grant. The rule
+      grants get only, not list or watch.
+
+  # The node plugin mounts, formats, and checks volumes on the host. It
+  # enters the host's root by chroot to run iscsiadm, multipath, and nvme
+  # against the host's own daemons, and it creates mounts that the kubelet
+  # must see. Each of these follows from that.
+  - id: KSV-0017
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: Mounting, formatting, and iSCSI login on the host need a privileged container.
+  - id: KSV-0001
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: A privileged container can always escalate, so the setting would not hold.
+  - id: KSV-0003
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: A privileged container holds every capability, so dropping them would not hold.
+  - id: KSV-0004
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: A privileged container holds every capability, so dropping them would not hold.
+  - id: KSV-0106
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: A privileged container holds every capability, so dropping them would not hold.
+  - id: KSV-0104
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: The runtime does not apply a seccomp profile to a privileged container.
+  - id: KSV-0030
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: The runtime does not apply a seccomp profile to a privileged container. The registrar sets RuntimeDefault.
+  - id: KSV-0014
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: The plugin writes iSCSI and multipath state through the host's root, and the registrar's root filesystem is read-only.
+  - id: KSV-0012
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: >-
+      Both containers run as root. The plugin mounts and formats, and the
+      registrar writes its socket into the kubelet's root-owned plugin
+      registry.
+  - id: KSV-0020
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: Both containers run as root; see KSV-0012.
+  - id: KSV-0021
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: Both containers run as root; see KSV-0012.
+  - id: KSV-0105
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: Both containers run as root; see KSV-0012.
+  - id: KSV-0118
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: Both containers run as root; see KSV-0012.
+  - id: KSV-0009
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: >-
+      iscsiadm reaches the host's iscsid on an abstract Unix socket, which
+      exists only in the host's network namespace.
+  - id: KSV-0023
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: >-
+      The plugin needs the kubelet's directory to create mounts the kubelet
+      sees, the plugin registry to register, and the host's root and /dev to
+      log in to iSCSI targets and format their disks.
+  - id: KSV-0121
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: The plugin enters the host's root by chroot and formats block devices under /dev; see KSV-0023.
+  - id: KSV-0018
+    paths: [deploy/kubernetes/v1.20/node.yml]
+    statement: >-
+      The plugin has no memory limit, because mkfs and fsck run in it and
+      their memory grows with the volume. A limit would kill a check of a
+      large volume part way through.
+
+  - id: DS-0026
+    statement: >-
+      The image has no HEALTHCHECK. Kubernetes ignores a Dockerfile
+      HEALTHCHECK, and the CSI sidecars probe the plugin over its socket.
