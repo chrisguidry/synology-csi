@@ -7,8 +7,8 @@ name: Trivy
 # packages in the `main` image after each publish, and again each week,
 # because new advisories reach an image that has not changed.
 #
-# Third-party actions are pinned to a commit, because a tag can be moved to
-# other code.
+# Every action in these workflows is pinned to a commit, because a tag can
+# be moved to other code. Dependabot moves the pins.
 on:
   push:
     branches: [main]
@@ -35,8 +35,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.1
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Scan the repository
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
