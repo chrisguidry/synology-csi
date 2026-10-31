@@ -4,7 +4,9 @@
 # The builder runs on the build machine's own platform and cross-compiles.
 # The Makefile builds a static binary with CGO_ENABLED=0, and the RUN below
 # sets GOARCH and GOARM from TARGETPLATFORM, so no emulator runs the compiler.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS builder
+# Each base image is pinned to a digest, because a tag can be pushed again
+# with other contents. Dependabot moves the tag and the digest together.
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
 LABEL stage=synobuilder
 
 RUN apk add --no-cache alpine-sdk
@@ -24,7 +26,7 @@ RUN env GOARCH=$(echo "$TARGETPLATFORM" | cut -f2 -d/) \
         make
 
 ############## Final stage ##############
-FROM alpine:3.24.2
+FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 ARG IMAGE_VERSION=dev
 ARG IMAGE_RELEASE=1
