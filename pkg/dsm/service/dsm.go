@@ -838,6 +838,12 @@ func (service *DsmService) listISCSIVolumes(dsmIp string) (infos []*models.K8sVo
 			// TODO: use target.ConnectedSessions to filter targets
 			for _, mapping := range target.MappedLuns {
 				lun, err := dsm.LunGet(mapping.LunUuid)
+				if errors.Is(err, utils.NoSuchLunError("")) {
+					// The LUN was deleted after the target listing named it.
+					// It is known not to exist, so the listing is still
+					// complete without it.
+					continue
+				}
 				if err != nil {
 					log.Errorf("[%s] Failed to get LUN(%s): %v", dsm.Ip, mapping.LunUuid, err)
 					listErr = errors.Join(listErr, fmt.Errorf("DSM[%s] failed to get LUN(%s): %w", dsm.Ip, mapping.LunUuid, err))
