@@ -332,11 +332,11 @@ func (ns *nodeServer) logoutTarget(k8sVolume *models.K8sVolumeRespSpec) {
 			"anything still in the page cache will not reach the LUN",
 			k8sVolume.Target.Iqn)
 	} else if err := ns.tools.fsyncDevice(volumeMountPath); err != nil {
-		log.Errorf("Failed to fsync device %s before logout, its last writes may only exist in the DSM's memory: %v",
-			volumeMountPath, err)
+		ns.reportFailedFlush(k8sVolume.VolumeId, volumeMountPath, err,
+			"Failed to fsync device %s before logout, its last writes may only exist in the DSM's memory: %v")
 	} else if err := ns.tools.flushDeviceBuffers(volumeMountPath); err != nil {
-		log.Errorf("Failed to flush device %s before logout, its last writes may not have reached the LUN: %v",
-			volumeMountPath, err)
+		ns.reportFailedFlush(k8sVolume.VolumeId, volumeMountPath, err,
+			"Failed to flush device %s before logout, its last writes may not have reached the LUN: %v")
 	} else {
 		log.Infof("Flushed device %s before logout of target[%s]", volumeMountPath, k8sVolume.Target.Iqn)
 	}
@@ -348,6 +348,27 @@ func (ns *nodeServer) logoutTarget(k8sVolume *models.K8sVolumeRespSpec) {
 	}
 
 	ns.Initiator.logout(k8sVolume.Target.Iqn, k8sVolume.DsmIp)
+}
+
+// reportFailedFlush logs a failed pre-logout flush as an error, or only as
+// information when the DSM already deleted the LUN, so nothing was lost.
+func (ns *nodeServer) reportFailedFlush(volumeId, devicePath string, err error, format string) {
+	if ns.lunWasDeleted(volumeId) {
+		log.Infof("Skipped the flush of device %s before logout, because the DSM already deleted its LUN: %v",
+			devicePath, err)
+		return
+	}
+	log.Errorf(format, devicePath, err)
+}
+
+// lunWasDeleted reports whether the DSM says the volume no longer exists. A
+// pod and its claim deleted together race: the controller deletes the LUN
+// while this node is still unstaging it, and the flush before logout then
+// fails with an I/O error. Nothing is lost then, because the volume itself is
+// gone. Any doubt, such as a DSM that cannot be reached, counts as not deleted.
+func (ns *nodeServer) lunWasDeleted(volumeId string) bool {
+	volume, err := ns.dsmService.GetVolume(volumeId)
+	return err == nil && volume == nil
 }
 
 // XFS refuses to mount a filesystem whose UUID is already in use on the host.
