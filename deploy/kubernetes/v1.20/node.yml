@@ -10,21 +10,12 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: synology-csi-node-role
 rules:
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list"]
+  # The node plugin lists nodes to grant their addresses access to an NFS
+  # share. It reads no other object: the kubelet hands it a volume's
+  # secrets in NodeStageVolume.
   - apiGroups: [""]
     resources: ["nodes"]
-    verbs: ["get", "list", "update"]
-  - apiGroups: [""]
-    resources: ["namespaces"]
     verbs: ["get", "list"]
-  - apiGroups: [""]
-    resources: ["persistentvolumes"]
-    verbs: ["get", "list", "watch", "update"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["volumeattachments"]
-    verbs: ["get", "list", "watch", "update"]
 
 ---
 kind: ClusterRoleBinding
@@ -57,11 +48,28 @@ spec:
         app: synology-csi-node
     spec:
       serviceAccount: csi-node-sa
+      # iscsiadm, run in the host's root by chroot, reaches the host's iscsid
+      # on an abstract Unix socket, which exists only in the host's network
+      # namespace.
       hostNetwork: true
       containers:
+        # The registrar writes its socket into the kubelet's plugin registry,
+        # a root-owned host directory, so it runs as root, but it needs no
+        # privilege and no capability.
         - name: csi-driver-registrar
           securityContext:
-            privileged: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
           imagePullPolicy: Always
           image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.3.0
           args:
@@ -90,6 +98,13 @@ spec:
             # mount/format and chroot into the host, so override it here.
             # privileged alone does not change the runtime user.
             runAsUser: 0
+          # No memory limit: mkfs and fsck run in this container, and their
+          # memory grows with the volume. A limit would kill a check of a
+          # large volume part way through.
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
           imagePullPolicy: IfNotPresent
           image: synology/synology-csi:v1.4.0
           args:

@@ -121,6 +121,17 @@ spec:
         app: synology-csi-controller
     spec:
       serviceAccountName: csi-controller-sa
+      # No container here mounts, formats, or touches the host: the plugin
+      # talks HTTPS to the DSM, and the sidecars talk to the API server and
+      # to the plugin's socket. So every container runs as an unprivileged
+      # user with no capabilities, on a read-only root filesystem.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       # Each sidecar's leader identity is its hostname. On the host network
       # that is the node's name, and two pods on one node would both hold
       # the Lease. On the pod network it is the pod's name. The controller
@@ -136,10 +147,16 @@ spec:
       containers:
         - name: csi-provisioner
           securityContext:
-            privileged: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
-              add: ["SYS_ADMIN"]
-            allowPrivilegeEscalation: true
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
           image: registry.k8s.io/sig-storage/csi-provisioner:v3.0.0
           args:
             - --timeout=120s
@@ -156,10 +173,16 @@ spec:
               mountPath: /var/lib/csi/sockets/pluginproxy/
         - name: csi-attacher
           securityContext:
-            privileged: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
-              add: ["SYS_ADMIN"]
-            allowPrivilegeEscalation: true
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
           image: registry.k8s.io/sig-storage/csi-attacher:v3.3.0
           args:
             - --v=5
@@ -174,10 +197,16 @@ spec:
               mountPath: /var/lib/csi/sockets/pluginproxy/
         - name: csi-resizer
           securityContext:
-            privileged: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
-              add: ["SYS_ADMIN"]
-            allowPrivilegeEscalation: true
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
           image: registry.k8s.io/sig-storage/csi-resizer:v1.3.0
           args:
             - --v=5
@@ -193,10 +222,16 @@ spec:
               mountPath: /var/lib/csi/sockets/pluginproxy/
         - name: csi-plugin
           securityContext:
-            privileged: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
-              add: ["SYS_ADMIN"]
-            allowPrivilegeEscalation: true
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
           image: synology/synology-csi:v1.4.0
           args:
             - --nodeid=NotUsed
