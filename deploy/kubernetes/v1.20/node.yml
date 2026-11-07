@@ -70,10 +70,10 @@ spec:
               memory: 32Mi
             limits:
               memory: 128Mi
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.3.0
           args:
-            - --v=5
+            - --v=2
             - --csi-address=$(ADDRESS)                         # the csi socket path inside the pod
             - --kubelet-registration-path=$(REGISTRATION_PATH) # the csi socket path on the host node
           env:
@@ -114,6 +114,11 @@ spec:
             - /etc/synology/client-info.yml
             - --log-level=info
             - --chroot-dir=/host
+            # On the host network, so the port is the node's.
+            - --metrics-address=:9809
+          ports:
+            - name: metrics
+              containerPort: 9809
           env:
             - name: CSI_ENDPOINT
               value: unix://csi/csi.sock
