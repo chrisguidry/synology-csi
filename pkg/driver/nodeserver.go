@@ -786,6 +786,18 @@ func (ns *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 		FormatOptions:     req.VolumeContext["formatOptions"],
 	}
 
+	// The kubelet stages every volume again after it restarts. A staging
+	// path that is already mounted is staged, and answering before the DSM
+	// lookup and the iSCSI login keeps a DSM that is slow or down from
+	// failing volumes that are in use. NFS never mounts its staging path:
+	// its stage writes the share's privilege, so it always runs.
+	if req.VolumeContext["protocol"] != utils.ProtocolNfs && volumeCapability.GetMount() != nil {
+		if notMount, err := ns.Mounter.Interface.IsLikelyNotMountPoint(stagingTargetPath); err == nil && !notMount {
+			log.Infof("NodeStageVolume: %s is already mounted", stagingTargetPath)
+			return &csi.NodeStageVolumeResponse{}, nil
+		}
+	}
+
 	switch req.VolumeContext["protocol"] {
 	case utils.ProtocolSmb:
 		return ns.nodeStageSMBVolume(ctx, spec, req.GetSecrets())
