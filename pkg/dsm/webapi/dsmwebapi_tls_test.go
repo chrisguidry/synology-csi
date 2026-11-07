@@ -167,8 +167,8 @@ func TestHTTPS_InsecureSkipVerify_ConnectsAndSendsCredentials(t *testing.T) {
 	if gotPasswd != "test-password" {
 		t.Errorf("server received passwd=%q, want %q", gotPasswd, "test-password")
 	}
-	if dsm.Sid != "test-sid" {
-		t.Errorf("dsm.Sid=%q, want %q", dsm.Sid, "test-sid")
+	if dsm.session() != "test-sid" {
+		t.Errorf("dsm.session()=%q, want %q", dsm.session(), "test-sid")
 	}
 }
 
@@ -190,8 +190,8 @@ func TestHTTPS_TLSCACert_ValidCert_ConnectsSuccessfully(t *testing.T) {
 	if err := dsm.Login(); err != nil {
 		t.Fatalf("expected successful login with correct TLSCACert, got: %v", err)
 	}
-	if dsm.Sid != "test-sid" {
-		t.Errorf("dsm.Sid=%q, want %q", dsm.Sid, "test-sid")
+	if dsm.session() != "test-sid" {
+		t.Errorf("dsm.session()=%q, want %q", dsm.session(), "test-sid")
 	}
 }
 
@@ -240,8 +240,8 @@ func TestHTTPS_TLSServerName_MatchesDNSSAN_ConnectsSuccessfully(t *testing.T) {
 	if err := dsm.Login(); err != nil {
 		t.Fatalf("expected successful login with TLSServerName matching the DNS SAN, got: %v", err)
 	}
-	if dsm.Sid != "test-sid" {
-		t.Errorf("dsm.Sid=%q, want %q", dsm.Sid, "test-sid")
+	if dsm.session() != "test-sid" {
+		t.Errorf("dsm.session()=%q, want %q", dsm.session(), "test-sid")
 	}
 }
 

@@ -28,46 +28,50 @@ type lookupFailingService struct {
 	createVolumeCalled bool
 }
 
-func (s *lookupFailingService) GetVolume(volId string) (*models.K8sVolumeRespSpec, error) {
+func (s *lookupFailingService) GetVolume(ctx context.Context, volId string) (*models.K8sVolumeRespSpec, error) {
 	return nil, errListIncomplete
 }
 
-func (s *lookupFailingService) GetVolumeByName(volName string) (*models.K8sVolumeRespSpec, error) {
+func (s *lookupFailingService) GetVolumeByName(ctx context.Context, volName string) (*models.K8sVolumeRespSpec, error) {
 	return nil, errListIncomplete
 }
 
-func (s *lookupFailingService) ListVolumes() ([]*models.K8sVolumeRespSpec, error) {
+func (s *lookupFailingService) ListVolumes(ctx context.Context) ([]*models.K8sVolumeRespSpec, error) {
 	// A partial list plus an error: callers must not use the partial half.
 	return []*models.K8sVolumeRespSpec{{VolumeId: "still-visible"}}, errListIncomplete
 }
 
-func (s *lookupFailingService) CreateVolume(spec *models.CreateK8sVolumeSpec) (*models.K8sVolumeRespSpec, error) {
+func (s *lookupFailingService) CreateVolume(ctx context.Context, spec *models.CreateK8sVolumeSpec) (*models.K8sVolumeRespSpec, error) {
 	s.createVolumeCalled = true
 	return &models.K8sVolumeRespSpec{VolumeId: "newly-created"}, nil
 }
 
 func (s *lookupFailingService) AddDsm(client common.ClientInfo) error { return nil }
 func (s *lookupFailingService) RemoveAllDsms()                        {}
-func (s *lookupFailingService) GetDsm(ip string) (*webapi.DSM, error) {
+func (s *lookupFailingService) GetDsm(ctx context.Context, ip string) (*webapi.DSM, error) {
 	return nil, errors.New("not used in these tests")
 }
 func (s *lookupFailingService) GetDsmsCount() int { return 1 }
-func (s *lookupFailingService) ListDsmVolumes(ip string) ([]webapi.VolInfo, error) {
+func (s *lookupFailingService) ListDsmVolumes(ctx context.Context, ip string) ([]webapi.VolInfo, error) {
 	return nil, nil
 }
-func (s *lookupFailingService) DeleteVolume(volId string) error { return nil }
-func (s *lookupFailingService) ExpandVolume(volId string, newSize int64) (*models.K8sVolumeRespSpec, error) {
+func (s *lookupFailingService) DeleteVolume(ctx context.Context, volId string) error { return nil }
+func (s *lookupFailingService) ExpandVolume(ctx context.Context, volId string, newSize int64) (*models.K8sVolumeRespSpec, error) {
 	return nil, nil
 }
-func (s *lookupFailingService) CreateSnapshot(spec *models.CreateK8sVolumeSnapshotSpec) (*models.K8sSnapshotRespSpec, error) {
+func (s *lookupFailingService) CreateSnapshot(ctx context.Context, spec *models.CreateK8sVolumeSnapshotSpec) (*models.K8sSnapshotRespSpec, error) {
 	return nil, nil
 }
-func (s *lookupFailingService) DeleteSnapshot(snapshotUuid string) error        { return nil }
-func (s *lookupFailingService) ListAllSnapshots() []*models.K8sSnapshotRespSpec { return nil }
-func (s *lookupFailingService) ListSnapshots(volId string) []*models.K8sSnapshotRespSpec {
+func (s *lookupFailingService) DeleteSnapshot(ctx context.Context, snapshotUuid string) error {
 	return nil
 }
-func (s *lookupFailingService) GetSnapshotByName(snapshotName string) *models.K8sSnapshotRespSpec {
+func (s *lookupFailingService) ListAllSnapshots(ctx context.Context) []*models.K8sSnapshotRespSpec {
+	return nil
+}
+func (s *lookupFailingService) ListSnapshots(ctx context.Context, volId string) []*models.K8sSnapshotRespSpec {
+	return nil
+}
+func (s *lookupFailingService) GetSnapshotByName(ctx context.Context, snapshotName string) *models.K8sSnapshotRespSpec {
 	return nil
 }
 

@@ -5,6 +5,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	log "github.com/sirupsen/logrus"
@@ -22,7 +23,7 @@ func (service *DsmService) createMappingSubsystem(dsm *webapi.DSM, spec *models.
 	var rollback createRollback
 	defer func() {
 		if retErr != nil {
-			rollback.run(dsm.Ip)
+			rollback.run(dsm)
 		}
 	}()
 
@@ -51,7 +52,7 @@ func (service *DsmService) createMappingSubsystem(dsm *webapi.DSM, spec *models.
 		// Left by an earlier attempt, so not ours to remove.
 	} else {
 		createdUuid := subsystemUuid
-		rollback.add(fmt.Sprintf("subsystem(%s)", subsystemSpec.Name), func() error { return dsm.SubsystemDelete(createdUuid) })
+		rollback.add(fmt.Sprintf("subsystem(%s)", subsystemSpec.Name), func(dsm *webapi.DSM) error { return dsm.SubsystemDelete(createdUuid) })
 	}
 
 	subsystemInfo, err := dsm.SubsystemGet(subsystemUuid)
@@ -70,7 +71,7 @@ func (service *DsmService) createNVMeVolumeBySnapshot(dsm *webapi.DSM, spec *mod
 	var rollback createRollback
 	defer func() {
 		if retErr != nil {
-			rollback.run(dsm.Ip)
+			rollback.run(dsm)
 		}
 	}()
 
@@ -94,7 +95,7 @@ func (service *DsmService) createNVMeVolumeBySnapshot(dsm *webapi.DSM, spec *mod
 		}
 	} else {
 		backendName := spec.BackendName
-		rollback.add(fmt.Sprintf("namespace(%s)", backendName), func() error {
+		rollback.add(fmt.Sprintf("namespace(%s)", backendName), func(dsm *webapi.DSM) error {
 			ns, err := dsm.NamespaceGet(backendName)
 			if err != nil {
 				return err
@@ -141,7 +142,7 @@ func (service *DsmService) createNVMeVolumeByVolume(dsm *webapi.DSM, spec *model
 	var rollback createRollback
 	defer func() {
 		if retErr != nil {
-			rollback.run(dsm.Ip)
+			rollback.run(dsm)
 		}
 	}()
 
@@ -170,7 +171,7 @@ func (service *DsmService) createNVMeVolumeByVolume(dsm *webapi.DSM, spec *model
 		}
 	} else {
 		backendName := spec.BackendName
-		rollback.add(fmt.Sprintf("namespace(%s)", backendName), func() error {
+		rollback.add(fmt.Sprintf("namespace(%s)", backendName), func(dsm *webapi.DSM) error {
 			ns, err := dsm.NamespaceGet(backendName)
 			if err != nil {
 				return err
@@ -217,7 +218,7 @@ func (service *DsmService) createNVMeVolumeByDsm(dsm *webapi.DSM, spec *models.C
 	var rollback createRollback
 	defer func() {
 		if retErr != nil {
-			rollback.run(dsm.Ip)
+			rollback.run(dsm)
 		}
 	}()
 
@@ -256,7 +257,7 @@ func (service *DsmService) createNVMeVolumeByDsm(dsm *webapi.DSM, spec *models.C
 		}
 	} else {
 		backendName := spec.BackendName
-		rollback.add(fmt.Sprintf("namespace(%s)", backendName), func() error {
+		rollback.add(fmt.Sprintf("namespace(%s)", backendName), func(dsm *webapi.DSM) error {
 			ns, err := dsm.NamespaceGet(backendName)
 			if err != nil {
 				return err
@@ -287,8 +288,8 @@ func (service *DsmService) createNVMeVolumeByDsm(dsm *webapi.DSM, spec *models.C
 // listNVMeVolumes returns the namespaces it could enumerate. A non-nil error
 // means the list is incomplete, so absence from it does not prove a volume is
 // gone.
-func (service *DsmService) listNVMeVolumes(dsmIp string) (infos []*models.K8sVolumeRespSpec, listErr error) {
-	for _, dsm := range service.allDsms() {
+func (service *DsmService) listNVMeVolumes(ctx context.Context, dsmIp string) (infos []*models.K8sVolumeRespSpec, listErr error) {
+	for _, dsm := range service.allDsms(ctx) {
 		if dsmIp != "" && dsmIp != dsm.Ip {
 			continue
 		}
@@ -331,7 +332,7 @@ func (service *DsmService) listNVMeSnapshotsByDsm(dsm *webapi.DSM) (infos []*mod
 		return infos
 	}
 
-	volumes, err := service.listNVMeVolumes(dsm.Ip)
+	volumes, err := service.listNVMeVolumes(dsm.Context(), dsm.Ip)
 	if err != nil {
 		log.Errorf("[%s] Namespace list was incomplete while listing snapshots: %v", dsm.Ip, err)
 	}

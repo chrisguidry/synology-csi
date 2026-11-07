@@ -233,7 +233,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 
 	// idempotency
 	// Note: an SMB PV may not be tested existed precisely because the share folder name was sliced from k8sVolumeName
-	k8sVolume, err := cs.dsmService.GetVolumeByName(volName)
+	k8sVolume, err := cs.dsmService.GetVolumeByName(ctx, volName)
 	if err != nil {
 		// Creating anyway could produce a second volume for the same PVC, so
 		// let the caller retry once the DSM can be listed again.
@@ -241,7 +241,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 			"Couldn't determine whether volume[%s] already exists: %v", volName, err)
 	}
 	if k8sVolume == nil {
-		k8sVolume, err = cs.dsmService.CreateVolume(spec)
+		k8sVolume, err = cs.dsmService.CreateVolume(ctx, spec)
 		if err != nil {
 			return nil, err
 		}
@@ -280,7 +280,7 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 		return nil, status.Errorf(codes.InvalidArgument, "No volume id is provided")
 	}
 
-	if err := cs.dsmService.DeleteVolume(volumeId); err != nil {
+	if err := cs.dsmService.DeleteVolume(ctx, volumeId); err != nil {
 		return nil, status.Error(codes.Internal,
 			fmt.Sprintf("Failed to DeleteVolume(%s), err: %v", volumeId, err))
 	}
@@ -306,7 +306,7 @@ func (cs *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req 
 		return nil, status.Error(codes.InvalidArgument, "No volume capabilities are provided")
 	}
 
-	k8sVolume, err := cs.dsmService.GetVolume(volumeId)
+	k8sVolume, err := cs.dsmService.GetVolume(ctx, volumeId)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable,
 			"Couldn't determine whether volume[%s] exists: %v", volumeId, err)
@@ -352,7 +352,7 @@ func (cs *controllerServer) ListVolumes(ctx context.Context, req *csi.ListVolume
 	}
 
 	pagingSkip := ("" != startingToken)
-	infos, err := cs.dsmService.ListVolumes()
+	infos, err := cs.dsmService.ListVolumes(ctx)
 	if err != nil {
 		// A truncated list would read as "these volumes are gone" to the caller.
 		return nil, status.Errorf(codes.Unavailable, "Couldn't list volumes: %v", err)
@@ -407,7 +407,7 @@ func (cs *controllerServer) ListVolumes(ctx context.Context, req *csi.ListVolume
 func (cs *controllerServer) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (*csi.GetCapacityResponse, error) {
 	params := req.GetParameters()
 
-	volInfos, err := cs.dsmService.ListDsmVolumes(params["dsm"])
+	volInfos, err := cs.dsmService.ListDsmVolumes(ctx, params["dsm"])
 
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "Failed to list dsm volumes")
@@ -454,7 +454,7 @@ func (cs *controllerServer) CreateSnapshot(ctx context.Context, req *csi.CreateS
 	}
 
 	// idempotency
-	orgSnap := cs.dsmService.GetSnapshotByName(snapshotName)
+	orgSnap := cs.dsmService.GetSnapshotByName(ctx, snapshotName)
 	if orgSnap != nil {
 		// already existed
 		if orgSnap.ParentUuid != srcVolId {
@@ -483,7 +483,7 @@ func (cs *controllerServer) CreateSnapshot(ctx context.Context, req *csi.CreateS
 		IsLocked:     utils.StringToBoolean(params["is_locked"]),
 	}
 
-	snapshot, err := cs.dsmService.CreateSnapshot(spec)
+	snapshot, err := cs.dsmService.CreateSnapshot(ctx, spec)
 	if err != nil {
 		log.Errorf("Failed to CreateSnapshot, snapshotName: %s, srcVolId: %s, err: %v", snapshotName, srcVolId, err)
 		return nil, err
@@ -507,7 +507,7 @@ func (cs *controllerServer) DeleteSnapshot(ctx context.Context, req *csi.DeleteS
 		return nil, status.Error(codes.InvalidArgument, "Snapshot id is empty.")
 	}
 
-	err := cs.dsmService.DeleteSnapshot(snapshotId)
+	err := cs.dsmService.DeleteSnapshot(ctx, snapshotId)
 	if err != nil {
 		return nil, status.Error(codes.Internal, fmt.Sprintf("Failed to DeleteSnapshot(%s), err: %v", snapshotId, err))
 	}
@@ -532,9 +532,9 @@ func (cs *controllerServer) ListSnapshots(ctx context.Context, req *csi.ListSnap
 	var snapshots []*models.K8sSnapshotRespSpec
 
 	if srcVolId != "" {
-		snapshots = cs.dsmService.ListSnapshots(srcVolId)
+		snapshots = cs.dsmService.ListSnapshots(ctx, srcVolId)
 	} else {
-		snapshots = cs.dsmService.ListAllSnapshots()
+		snapshots = cs.dsmService.ListAllSnapshots(ctx)
 	}
 
 	sort.Sort(models.BySnapshotAndParentUuid(snapshots))
@@ -594,7 +594,7 @@ func (cs *controllerServer) ControllerExpandVolume(ctx context.Context, req *csi
 			"InvalidArgument: Please check CapacityRange[%v]", capRange)
 	}
 
-	k8sVolume, err := cs.dsmService.ExpandVolume(volumeId, sizeInByte)
+	k8sVolume, err := cs.dsmService.ExpandVolume(ctx, volumeId, sizeInByte)
 	if err != nil {
 		return nil, err
 	}

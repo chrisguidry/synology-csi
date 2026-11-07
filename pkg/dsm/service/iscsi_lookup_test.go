@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 )
 
@@ -24,7 +25,7 @@ func TestALookupListsTargetsAndLunsOnce(t *testing.T) {
 	}
 	service := serviceFor(t, fake)
 
-	volume, err := service.GetVolume(wanted)
+	volume, err := service.GetVolume(context.Background(), wanted)
 
 	if err != nil || volume == nil || volume.VolumeId != wanted {
 		t.Fatalf("GetVolume(%s) = (%v, %v), want the volume", wanted, volume, err)
@@ -53,7 +54,7 @@ func TestAMappedLunMissingFromTheListIsReadOnItsOwn(t *testing.T) {
 	fake.unlisted[unlisted] = true
 	service := serviceFor(t, fake)
 
-	volume, err := service.GetVolume(unlisted)
+	volume, err := service.GetVolume(context.Background(), unlisted)
 
 	if err != nil || volume == nil || volume.VolumeId != unlisted {
 		t.Fatalf("GetVolume(%s) = (%v, %v), want the volume", unlisted, volume, err)
@@ -76,7 +77,7 @@ func TestALookupIsIncompleteWhenAListFails(t *testing.T) {
 			fake.failing[failing] = true
 			service := serviceFor(t, fake)
 
-			volume, err := service.GetVolume("no-such-volume")
+			volume, err := service.GetVolume(context.Background(), "no-such-volume")
 
 			if err == nil || volume != nil {
 				t.Errorf("GetVolume = (%v, %v), want an error", volume, err)
@@ -104,7 +105,7 @@ func TestAMappedLunTheDSMNoLongerHasIsGone(t *testing.T) {
 		{"deleted", false},
 		{kept, true},
 	} {
-		volume, err := service.GetVolume(lookup.uuid)
+		volume, err := service.GetVolume(context.Background(), lookup.uuid)
 
 		if err != nil || (volume != nil) != lookup.found {
 			t.Errorf("GetVolume(%s) = (%v, %v), want found=%v", lookup.uuid, volume, err, lookup.found)

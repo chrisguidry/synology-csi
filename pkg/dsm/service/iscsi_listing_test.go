@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -58,7 +59,7 @@ func TestADeletedLunIsLeftOutOfTheListing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	volumes, err := service.listISCSIVolumes("")
+	volumes, err := service.listISCSIVolumes(context.Background(), "")
 
 	if err != nil {
 		t.Fatalf("listing failed because of a LUN the DSM already deleted: %v", err)
@@ -74,7 +75,7 @@ func TestADeletedLunIsKnownNotToExist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	volume, err := service.GetVolume("gone")
+	volume, err := service.GetVolume(context.Background(), "gone")
 
 	// (nil, nil) tells NodeUnstageVolume and DeleteVolume the volume is gone,
 	// where an error makes them fail and be called again.

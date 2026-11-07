@@ -71,7 +71,7 @@ func TestADSMIsAddedOnceItBecomesReachable(t *testing.T) {
 	if err := <-added; err != nil {
 		t.Fatalf("AddDsmWhenReachable: %v", err)
 	}
-	dsm, err := service.GetDsm(client.Host)
+	dsm, err := service.GetDsm(context.Background(), client.Host)
 	if err != nil {
 		t.Fatalf("GetDsm: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestReadersCanListDSMsWhileOneIsAdded(t *testing.T) {
 	go func() {
 		defer close(done)
 		for ctx.Err() == nil && service.GetDsmsCount() == 0 {
-			service.ListDsmVolumes("")
+			service.ListDsmVolumes(context.Background(), "")
 		}
 	}()
 

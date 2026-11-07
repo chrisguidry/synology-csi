@@ -5,6 +5,7 @@
 package webapi
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -15,17 +16,23 @@ import (
 	"net/url"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/SynologyOpenSource/synology-csi/pkg/logger"
 	log "github.com/sirupsen/logrus"
 )
+
+// DefaultRequestTimeout bounds one DSM request, so a DSM that stops
+// answering fails the CSI call instead of holding it and the sidecar that
+// waits on it. It leaves room for the share busy retry to run its whole
+// budget and then wait out one request inside the sidecars' RPC timeout.
+const DefaultRequestTimeout = 60 * time.Second
 
 type DSM struct {
 	Ip         string
 	Port       int
 	Username   string
 	Password   string
-	Sid        string
 	Https      bool
 	Controller string
 	TLSCACert          string
@@ -39,6 +46,65 @@ type DSM struct {
 	clientOnce sync.Once
 	client     *http.Client
 	clientErr  error
+	// timeout replaces DefaultRequestTimeout when it is set.
+	timeout time.Duration
+
+	sid string
+
+	// A view from WithContext sends its requests with ctx, and reads the
+	// session and the client of root, the DSM it came from.
+	ctx  context.Context
+	root *DSM
+}
+
+// WithContext returns a view of the DSM whose requests carry ctx, so a CSI
+// call that its caller cancels or times out stops waiting on the DSM. The
+// view shares the DSM's session and connections.
+func (dsm *DSM) WithContext(ctx context.Context) *DSM {
+	shared := dsm.shared()
+	return &DSM{
+		Ip:                 shared.Ip,
+		Port:               shared.Port,
+		Username:           shared.Username,
+		Password:           shared.Password,
+		Https:              shared.Https,
+		Controller:         shared.Controller,
+		TLSCACert:          shared.TLSCACert,
+		TLSServerName:      shared.TLSServerName,
+		InsecureSkipVerify: shared.InsecureSkipVerify,
+		SystemInfo:         shared.SystemInfo,
+		ctx:                ctx,
+		root:               shared,
+	}
+}
+
+// WithoutCancel returns a view whose requests outlive the cancellation of
+// this one's context. A rollback uses it: the call that failed may have
+// failed because its context ended, and the resources it made are still on
+// the DSM.
+func (dsm *DSM) WithoutCancel() *DSM {
+	return dsm.WithContext(context.WithoutCancel(dsm.Context()))
+}
+
+// session is the session id the DSM's last login returned.
+func (dsm *DSM) session() string {
+	return dsm.shared().sid
+}
+
+// shared is the DSM that holds the session and the client.
+func (dsm *DSM) shared() *DSM {
+	if dsm.root != nil {
+		return dsm.root
+	}
+	return dsm
+}
+
+// Context is the context this view's requests carry.
+func (dsm *DSM) Context() context.Context {
+	if dsm.ctx != nil {
+		return dsm.ctx
+	}
+	return context.Background()
 }
 
 type SystemInfo struct {
@@ -64,15 +130,20 @@ type Response struct {
 }
 
 func (dsm *DSM) httpClient() (*http.Client, error) {
-	dsm.clientOnce.Do(func() {
-		dsm.client, dsm.clientErr = dsm.newHTTPClient()
+	shared := dsm.shared()
+	shared.clientOnce.Do(func() {
+		shared.client, shared.clientErr = shared.newHTTPClient()
 	})
-	return dsm.client, dsm.clientErr
+	return shared.client, shared.clientErr
 }
 
 func (dsm *DSM) newHTTPClient() (*http.Client, error) {
+	timeout := DefaultRequestTimeout
+	if dsm.timeout != 0 {
+		timeout = dsm.timeout
+	}
 	if !dsm.Https {
-		return &http.Client{}, nil
+		return &http.Client{Timeout: timeout}, nil
 	}
 
 	tlsCfg := &tls.Config{}
@@ -103,7 +174,7 @@ func (dsm *DSM) newHTTPClient() (*http.Client, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = tlsCfg
 
-	return &http.Client{Transport: tr}, nil
+	return &http.Client{Transport: tr, Timeout: timeout}, nil
 }
 
 func (dsm *DSM) sendRequest(data string, apiTemplate interface{}, params url.Values, cgiPath string) (Response, error) {
@@ -148,13 +219,16 @@ func (dsm *DSM) sendRequestWithoutConnectionCheck(data string, apiTemplate inter
 	}
 
 	if data != "" {
-		req, err = http.NewRequest("POST", baseUrl.String(), nil)
+		req, err = http.NewRequestWithContext(dsm.Context(), "POST", baseUrl.String(), nil)
 	} else {
-		req, err = http.NewRequest("GET", baseUrl.String(), nil)
+		req, err = http.NewRequestWithContext(dsm.Context(), "GET", baseUrl.String(), nil)
+	}
+	if err != nil {
+		return Response{}, err
 	}
 
-	if dsm.Sid != "" {
-		cookie := http.Cookie{Name: "id", Value: dsm.Sid}
+	if sid := dsm.session(); sid != "" {
+		cookie := http.Cookie{Name: "id", Value: sid}
 		req.AddCookie(&cookie)
 	}
 
@@ -253,7 +327,7 @@ func (dsm *DSM) Login() error {
 	if !ok {
 		return fmt.Errorf("Failed to assert response to %T", &LoginResp{})
 	}
-	dsm.Sid = loginResp.Sid
+	dsm.shared().sid = loginResp.Sid
 
 	return nil
 }
@@ -269,7 +343,7 @@ func (dsm *DSM) Logout() error {
 	if err != nil {
 		return err
 	}
-	dsm.Sid = ""
+	dsm.shared().sid = ""
 
 	return nil
 }
