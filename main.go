@@ -38,6 +38,8 @@ var (
 	multipathPath  = ""
 	multipathdPath = ""
 	nvmePath       = ""
+	// Metrics
+	metricsAddress = ""
 )
 
 var rootCmd = &cobra.Command{
@@ -80,6 +82,12 @@ func driverStart() error {
 	// so the driver serves it once it comes up instead of never.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// The listener opens before any DSM is added, so a scrape reports a DSM
+	// that cannot be reached while the driver waits for it.
+	if err := serveMetrics(ctx, metricsAddress); err != nil {
+		log.Errorf("Failed to serve metrics on %s: %v", metricsAddress, err)
+		return err
+	}
 	for _, client := range info.Clients {
 		err := dsmService.AddDsm(client)
 		if err != nil {
@@ -160,6 +168,7 @@ func addFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVar(&multipathPath, "multipath-path", multipathPath, "Full path of multipath executable")
 	cmd.PersistentFlags().StringVar(&multipathdPath, "multipathd-path", multipathdPath, "Full path of multipathd executable")
 	cmd.PersistentFlags().StringVar(&nvmePath, "nvme-path", nvmePath, "Full path of nvme executable")
+	cmd.PersistentFlags().StringVar(&metricsAddress, "metrics-address", metricsAddress, "Address to serve Prometheus metrics on, such as :8095 (empty serves none)")
 
 	cmd.MarkFlagRequired("endpoint")
 	cmd.MarkFlagRequired("client-info")

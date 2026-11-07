@@ -161,13 +161,17 @@ spec:
           args:
             - --timeout=120s
             - --csi-address=$(ADDRESS)
-            - --v=5
+            - --v=2
             - --extra-create-metadata
             - --leader-election
+            - --http-endpoint=:8080
+          ports:
+            - name: provisioner
+              containerPort: 8080
           env:
             - name: ADDRESS
               value: /var/lib/csi/sockets/pluginproxy/csi.sock
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: socket-dir
               mountPath: /var/lib/csi/sockets/pluginproxy/
@@ -185,13 +189,17 @@ spec:
               memory: 256Mi
           image: registry.k8s.io/sig-storage/csi-attacher:v3.3.0
           args:
-            - --v=5
+            - --v=2
             - --csi-address=$(ADDRESS)
             - --leader-election
+            - --http-endpoint=:8081
+          ports:
+            - name: attacher
+              containerPort: 8081
           env:
             - name: ADDRESS
               value: /var/lib/csi/sockets/pluginproxy/csi.sock
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: socket-dir
               mountPath: /var/lib/csi/sockets/pluginproxy/
@@ -208,15 +216,23 @@ spec:
             limits:
               memory: 256Mi
           image: registry.k8s.io/sig-storage/csi-resizer:v1.3.0
+          # --handle-volume-inuse-error=false: the plugin never refuses to
+          # expand a volume that a pod uses, so the resizer needs no watch on
+          # every pod in the cluster to wait for a claim to fall out of use.
           args:
-            - --v=5
+            - --v=2
             - --csi-address=$(ADDRESS)
             - --timeout=120s
             - --leader-election
+            - --handle-volume-inuse-error=false
+            - --http-endpoint=:8082
+          ports:
+            - name: resizer
+              containerPort: 8082
           env:
             - name: ADDRESS
               value: /var/lib/csi/sockets/pluginproxy/csi.sock
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: socket-dir
               mountPath: /var/lib/csi/sockets/pluginproxy/
@@ -239,6 +255,10 @@ spec:
             - --client-info
             - /etc/synology/client-info.yml
             - --log-level=info
+            - --metrics-address=:8095
+          ports:
+            - name: metrics
+              containerPort: 8095
           env:
             - name: CSI_ENDPOINT
               value: unix:///var/lib/csi/sockets/pluginproxy/csi.sock

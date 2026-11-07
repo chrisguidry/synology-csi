@@ -75,10 +75,10 @@ func waitForDevicePathToExist(path string) error {
 }
 
 // for unstage, resize volume
-func (t *tools) getExistedVolumeMountPath(targetIqn string, mappingIndex int) string {
+func (t *tools) getExistedVolumeMountPath(ctx context.Context, targetIqn string, mappingIndex int) string {
 	paths := []string{}
 
-	sessions := t.listSessionsByIqn(targetIqn)
+	sessions := t.listSessionsByIqn(ctx, targetIqn)
 	for _, session := range sessions {
 		paths = append(paths, fmt.Sprintf("%sip-%s-iscsi-%s-lun-%d", "/dev/disk/by-path/", session.Portal, targetIqn, mappingIndex))
 	}
@@ -191,10 +191,10 @@ func createTargetMountPath(mounter mount.Interface, mountPath string, isBlock bo
 	return notMount, nil
 }
 
-func (ns *nodeServer) getPortals(dsmIp string) []string {
+func (ns *nodeServer) getPortals(ctx context.Context, dsmIp string) []string {
 	portals := []string{}
 
-	dsm, err := ns.dsmService.GetDsm(dsmIp)
+	dsm, err := ns.dsmService.GetDsm(ctx, dsmIp)
 	if err != nil {
 		log.Errorf("Failed to get DSM[%s]", dsmIp)
 		return portals
@@ -209,7 +209,7 @@ func (ns *nodeServer) getPortals(dsmIp string) []string {
 	}
 
 	if dsm.IsUC() && ns.tools.IsMultipathEnabled() {
-		dsm2, err := dsm.GetAnotherController()
+		dsm2, err := dsm.GetAnotherController(ctx)
 		if err != nil {
 			log.Errorf("[%s] UC failed to get another controller: %v", dsmIp, err)
 		} else {
@@ -219,9 +219,9 @@ func (ns *nodeServer) getPortals(dsmIp string) []string {
 	return portals
 }
 
-func (ns *nodeServer) loginNVMeSubsystem(volumeId string) ([]string, error) {
+func (ns *nodeServer) loginNVMeSubsystem(ctx context.Context, volumeId string) ([]string, error) {
 	paths := []string{}
-	k8sVolume, err := ns.dsmService.GetVolume(volumeId)
+	k8sVolume, err := ns.dsmService.GetVolume(ctx, volumeId)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable,
 			"Couldn't determine whether volume[%s] exists: %v", volumeId, err)
@@ -245,7 +245,7 @@ func (ns *nodeServer) loginNVMeSubsystem(volumeId string) ([]string, error) {
 	}
 
 	if !hasNVMeSession(targetIp, NVMePort, "tcp", subsysNqn) {
-		if err := ns.tools.nvmeConnect(targetIp, NVMePort, "tcp", subsysNqn, ""); err != nil {
+		if err := ns.tools.nvmeConnect(ctx, targetIp, NVMePort, "tcp", subsysNqn, ""); err != nil {
 			return nil, status.Errorf(codes.Internal, "Failed to connect to NVMe subsystem %s at %s:%d: %v", subsysNqn, targetIp, NVMePort, err)
 		}
 	}
@@ -260,12 +260,12 @@ func (ns *nodeServer) loginNVMeSubsystem(volumeId string) ([]string, error) {
 	return paths, nil
 }
 
-func (ns *nodeServer) logoutNVMeSubsystem(nqn string) {
+func (ns *nodeServer) logoutNVMeSubsystem(ctx context.Context, nqn string) {
 	if nqn == "" {
 		return
 	}
 
-	if err := ns.tools.nvmeDisconnect(nqn); err != nil {
+	if err := ns.tools.nvmeDisconnect(ctx, nqn); err != nil {
 		log.Errorf("Failed to disconnect NVMe subsystem [%s]: %v", nqn, err)
 	}
 }
@@ -273,8 +273,8 @@ func (ns *nodeServer) logoutNVMeSubsystem(nqn string) {
 // loginTarget logs the node in to the volume's target and returns the by-path
 // device links, along with the target IQN and LUN number they are supposed to
 // stand for -- the caller is expected to verify that before trusting them.
-func (ns *nodeServer) loginTarget(volumeId string) (paths []string, iqn string, lun int, err error) {
-	k8sVolume, err := ns.dsmService.GetVolume(volumeId)
+func (ns *nodeServer) loginTarget(ctx context.Context, volumeId string) (paths []string, iqn string, lun int, err error) {
+	k8sVolume, err := ns.dsmService.GetVolume(ctx, volumeId)
 	if err != nil {
 		return nil, "", 0, status.Errorf(codes.Unavailable,
 			"Couldn't determine whether volume[%s] exists: %v", volumeId, err)
@@ -283,7 +283,7 @@ func (ns *nodeServer) loginTarget(volumeId string) (paths []string, iqn string, 
 		return nil, "", 0, status.Error(codes.NotFound, fmt.Sprintf("Volume[%s] is not found", volumeId))
 	}
 
-	portals := ns.getPortals(k8sVolume.DsmIp)
+	portals := ns.getPortals(ctx, k8sVolume.DsmIp)
 	if len(portals) == 0 {
 		return nil, "", 0, status.Errorf(codes.Internal, "Failed to get portals")
 	}
@@ -292,7 +292,7 @@ func (ns *nodeServer) loginTarget(volumeId string) (paths []string, iqn string, 
 	iqn = k8sVolume.Target.Iqn
 	lun = k8sVolume.Target.MappedLuns[0].MappingIndex
 	for _, portal := range portals {
-		if err := ns.Initiator.login(iqn, portal); err != nil {
+		if err := ns.Initiator.login(ctx, iqn, portal); err != nil {
 			return nil, "", 0, status.Error(codes.Internal,
 				fmt.Sprintf("Failed to login with target iqn [%s], err: %v", iqn, err))
 		}
@@ -309,14 +309,14 @@ func (ns *nodeServer) loginTarget(volumeId string) (paths []string, iqn string, 
 	return paths, iqn, lun, nil
 }
 
-func (ns *nodeServer) logoutTarget(k8sVolume *models.K8sVolumeRespSpec) {
+func (ns *nodeServer) logoutTarget(ctx context.Context, k8sVolume *models.K8sVolumeRespSpec) {
 	if k8sVolume == nil {
 		return
 	}
 
 	// Assume target and lun 1-1 mapping
 	mappingIndex := k8sVolume.Target.MappedLuns[0].MappingIndex
-	volumeMountPath := ns.tools.getExistedVolumeMountPath(k8sVolume.Target.Iqn, mappingIndex)
+	volumeMountPath := ns.tools.getExistedVolumeMountPath(ctx, k8sVolume.Target.Iqn, mappingIndex)
 
 	// Push anything still in the page cache out to the LUN before the session
 	// goes away. A filesystem volume was already flushed by the Unmount above,
@@ -332,10 +332,10 @@ func (ns *nodeServer) logoutTarget(k8sVolume *models.K8sVolumeRespSpec) {
 			"anything still in the page cache will not reach the LUN",
 			k8sVolume.Target.Iqn)
 	} else if err := ns.tools.fsyncDevice(volumeMountPath); err != nil {
-		ns.reportFailedFlush(k8sVolume.VolumeId, volumeMountPath, err,
+		ns.reportFailedFlush(ctx, k8sVolume.VolumeId, volumeMountPath, err,
 			"Failed to fsync device %s before logout, its last writes may only exist in the DSM's memory: %v")
 	} else if err := ns.tools.flushDeviceBuffers(volumeMountPath); err != nil {
-		ns.reportFailedFlush(k8sVolume.VolumeId, volumeMountPath, err,
+		ns.reportFailedFlush(ctx, k8sVolume.VolumeId, volumeMountPath, err,
 			"Failed to flush device %s before logout, its last writes may not have reached the LUN: %v")
 	} else {
 		log.Infof("Flushed device %s before logout of target[%s]", volumeMountPath, k8sVolume.Target.Iqn)
@@ -347,13 +347,13 @@ func (ns *nodeServer) logoutTarget(k8sVolume *models.K8sVolumeRespSpec) {
 		}
 	}
 
-	ns.Initiator.logout(k8sVolume.Target.Iqn, k8sVolume.DsmIp)
+	ns.Initiator.logout(ctx, k8sVolume.Target.Iqn, k8sVolume.DsmIp)
 }
 
 // reportFailedFlush logs a failed pre-logout flush as an error, or only as
 // information when the DSM already deleted the LUN, so nothing was lost.
-func (ns *nodeServer) reportFailedFlush(volumeId, devicePath string, err error, format string) {
-	if ns.lunWasDeleted(volumeId) {
+func (ns *nodeServer) reportFailedFlush(ctx context.Context, volumeId, devicePath string, err error, format string) {
+	if ns.lunWasDeleted(ctx, volumeId) {
 		log.Infof("Skipped the flush of device %s before logout, because the DSM already deleted its LUN: %v",
 			devicePath, err)
 		return
@@ -366,8 +366,8 @@ func (ns *nodeServer) reportFailedFlush(volumeId, devicePath string, err error, 
 // while this node is still unstaging it, and the flush before logout then
 // fails with an I/O error. Nothing is lost then, because the volume itself is
 // gone. Any doubt, such as a DSM that cannot be reached, counts as not deleted.
-func (ns *nodeServer) lunWasDeleted(volumeId string) bool {
-	volume, err := ns.dsmService.GetVolume(volumeId)
+func (ns *nodeServer) lunWasDeleted(ctx context.Context, volumeId string) bool {
+	volume, err := ns.dsmService.GetVolume(ctx, volumeId)
 	return err == nil && volume == nil
 }
 
@@ -454,7 +454,7 @@ func getNodeAddress(ctx context.Context, client clientset.Interface) ([]string, 
 // the saved rules still read back fine -- concurrent saves of other shares
 // regenerate the table from state that misses this one. Re-saving is the only
 // API-level way to put the entry back.
-func (ns *nodeServer) setNFSVolumePrivilege(sourcePath string, hostnames []string, authType utils.AuthType, force bool) error {
+func (ns *nodeServer) setNFSVolumePrivilege(ctx context.Context, sourcePath string, hostnames []string, authType utils.AuthType, force bool) error {
 	// NFSTODO: fix the parsing rule
 	s := strings.Split(strings.TrimPrefix(sourcePath, "//"), "/")
 	if len(s) != 2 {
@@ -462,7 +462,7 @@ func (ns *nodeServer) setNFSVolumePrivilege(sourcePath string, hostnames []strin
 	}
 	dsmIp, shareName := s[0], s[1]
 
-	dsm, err := ns.dsmService.GetDsm(dsmIp)
+	dsm, err := ns.dsmService.GetDsm(ctx, dsmIp)
 	if err != nil {
 		return fmt.Errorf("Failed to get DSM[%s]", dsmIp)
 	}
@@ -537,14 +537,14 @@ func missingNfsPrivilegeClients(current, want webapi.SharePrivilege) []string {
 	return missing
 }
 
-func (ns *nodeServer) setSMBVolumePermission(sourcePath string, userName string, authType utils.AuthType) error {
+func (ns *nodeServer) setSMBVolumePermission(ctx context.Context, sourcePath string, userName string, authType utils.AuthType) error {
 	s := strings.Split(strings.TrimPrefix(sourcePath, "//"), "/")
 	if len(s) != 2 {
 		return fmt.Errorf("Failed to parse dsmIp and shareName from source path")
 	}
 	dsmIp, shareName := s[0], s[1]
 
-	dsm, err := ns.dsmService.GetDsm(dsmIp)
+	dsm, err := ns.dsmService.GetDsm(ctx, dsmIp)
 	if err != nil {
 		return fmt.Errorf("Failed to get DSM[%s]", dsmIp)
 	}
@@ -607,7 +607,7 @@ func (ns *nodeServer) nodeStageISCSIVolume(ctx context.Context, spec *models.Nod
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	iscsiDevPaths, iqn, lun, err := ns.loginTarget(spec.VolumeId)
+	iscsiDevPaths, iqn, lun, err := ns.loginTarget(ctx, spec.VolumeId)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -665,7 +665,7 @@ func (ns *nodeServer) nodeStageSMBVolume(ctx context.Context, spec *models.NodeS
 	domain := strings.TrimSpace(secrets["domain"])
 
 	// set permission to access the share
-	if err := ns.setSMBVolumePermission(spec.Source, username, utils.AuthTypeReadWrite); err != nil {
+	if err := ns.setSMBVolumePermission(ctx, spec.Source, username, utils.AuthTypeReadWrite); err != nil {
 		return nil, status.Error(codes.Internal, fmt.Sprintf("Failed to set permission, source: %s, err: %v", spec.Source, err))
 	}
 
@@ -715,7 +715,7 @@ func (ns *nodeServer) nodeStageNFSVolume(ctx context.Context, spec *models.NodeS
 		return nil, status.Error(codes.Internal, fmt.Sprintf("Failed to get node IPs for NFS privilege setting, err: %v", err))
 	}
 
-	if err := ns.setNFSVolumePrivilege(spec.Source, nodeIps, utils.AuthTypeReadWrite, false); err != nil {
+	if err := ns.setNFSVolumePrivilege(ctx, spec.Source, nodeIps, utils.AuthTypeReadWrite, false); err != nil {
 		return nil, status.Error(codes.Internal, fmt.Sprintf("Failed to set NFS privilege rule, source: %s, err: %v", spec.Source, err))
 	}
 	return &csi.NodeStageVolumeResponse{}, nil
@@ -727,7 +727,7 @@ func (ns *nodeServer) nodeStageNVMeVolume(ctx context.Context, spec *models.Node
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	nvmeDevPaths, err := ns.loginNVMeSubsystem(spec.VolumeId)
+	nvmeDevPaths, err := ns.loginNVMeSubsystem(ctx, spec.VolumeId)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -786,6 +786,18 @@ func (ns *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 		FormatOptions:     req.VolumeContext["formatOptions"],
 	}
 
+	// The kubelet stages every volume again after it restarts. A staging
+	// path that is already mounted is staged, and answering before the DSM
+	// lookup and the iSCSI login keeps a DSM that is slow or down from
+	// failing volumes that are in use. NFS never mounts its staging path:
+	// its stage writes the share's privilege, so it always runs.
+	if req.VolumeContext["protocol"] != utils.ProtocolNfs && volumeCapability.GetMount() != nil {
+		if notMount, err := ns.Mounter.Interface.IsLikelyNotMountPoint(stagingTargetPath); err == nil && !notMount {
+			log.Infof("NodeStageVolume: %s is already mounted", stagingTargetPath)
+			return &csi.NodeStageVolumeResponse{}, nil
+		}
+	}
+
 	switch req.VolumeContext["protocol"] {
 	case utils.ProtocolSmb:
 		return ns.nodeStageSMBVolume(ctx, spec, req.GetSecrets())
@@ -819,7 +831,7 @@ func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 		}
 	}
 
-	k8sVolume, err := ns.dsmService.GetVolume(volumeId)
+	k8sVolume, err := ns.dsmService.GetVolume(ctx, volumeId)
 	if err != nil {
 		// Claiming the volume is unstaged could leave an iSCSI session logged
 		// in with nothing left to clean it up; let kubelet call again instead.
@@ -831,9 +843,9 @@ func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 	}
 
 	if k8sVolume.Protocol == utils.ProtocolIscsi {
-		ns.logoutTarget(k8sVolume)
+		ns.logoutTarget(ctx, k8sVolume)
 	} else if k8sVolume.Protocol == utils.ProtocolNvme {
-		ns.logoutNVMeSubsystem(k8sVolume.Subsystem.Nqn)
+		ns.logoutNVMeSubsystem(ctx, k8sVolume.Subsystem.Nqn)
 	}
 
 	return &csi.NodeUnstageVolumeResponse{}, nil
@@ -908,7 +920,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 				"re-saving its privilege to regenerate the export table and retrying the mount", source)
 			if nodeIps, ipErr := getNodeAddress(ctx, ns.Client); ipErr != nil {
 				log.Errorf("Failed to get node IPs to restore the export of %s: %v", source, ipErr)
-			} else if saveErr := ns.setNFSVolumePrivilege(
+			} else if saveErr := ns.setNFSVolumePrivilege(ctx,
 				"//"+server+"/"+path.Base(baseDir), nodeIps, utils.AuthTypeReadWrite, true); saveErr != nil {
 				log.Errorf("Failed to re-save the NFS privilege of %s: %v", source, saveErr)
 			} else {
@@ -952,7 +964,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 	case utils.ProtocolNvme:
-		nvmeDevPaths, err := ns.loginNVMeSubsystem(volumeId)
+		nvmeDevPaths, err := ns.loginNVMeSubsystem(ctx, volumeId)
 		if err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
@@ -971,7 +983,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 	default:
-		iscsiDevPaths, iqn, lun, err := ns.loginTarget(volumeId)
+		iscsiDevPaths, iqn, lun, err := ns.loginTarget(ctx, volumeId)
 		if err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
@@ -1111,7 +1123,7 @@ func (ns *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandV
 		return nil, status.Error(codes.InvalidArgument, "InvalidArgument: Please check volume ID and volume path.")
 	}
 
-	k8sVolume, err := ns.dsmService.GetVolume(volumeId)
+	k8sVolume, err := ns.dsmService.GetVolume(ctx, volumeId)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable,
 			"Couldn't determine whether volume[%s] exists: %v", volumeId, err)
@@ -1127,13 +1139,13 @@ func (ns *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandV
 
 	var volumeMountPath string
 	if k8sVolume.Protocol == utils.ProtocolIscsi {
-		if err := ns.Initiator.rescan(k8sVolume.Target.Iqn); err != nil {
+		if err := ns.Initiator.rescan(ctx, k8sVolume.Target.Iqn); err != nil {
 			return nil, status.Error(codes.Internal, fmt.Sprintf("Failed to rescan. err: %v", err))
 		}
 
 		// Assume target and lun 1-1 mapping
 		mappingIndex := k8sVolume.Target.MappedLuns[0].MappingIndex
-		volumeMountPath = ns.tools.getExistedVolumeMountPath(k8sVolume.Target.Iqn, mappingIndex)
+		volumeMountPath = ns.tools.getExistedVolumeMountPath(ctx, k8sVolume.Target.Iqn, mappingIndex)
 		if volumeMountPath == "" {
 			return nil, status.Error(codes.Internal, "Can't get volume mount path")
 		}

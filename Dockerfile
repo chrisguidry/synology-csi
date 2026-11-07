@@ -18,7 +18,7 @@ COPY Makefile .
 
 ARG TARGETPLATFORM
 
-COPY main.go .
+COPY *.go .
 COPY pkg ./pkg
 COPY synocli ./synocli
 RUN env GOARCH=$(echo "$TARGETPLATFORM" | cut -f2 -d/) \

@@ -5,6 +5,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	log "github.com/sirupsen/logrus"
@@ -18,7 +19,7 @@ import (
 	"github.com/SynologyOpenSource/synology-csi/pkg/utils"
 )
 
-func GMTToUnixSecond(timeStr string) (int64) {
+func GMTToUnixSecond(timeStr string) int64 {
 	t, err := time.Parse("GMT-07-2006.01.02-15.04.05", timeStr)
 	if err != nil {
 		log.Error(err)
@@ -31,7 +32,7 @@ func (service *DsmService) createSMBorNFSVolumeBySnapshot(dsm *webapi.DSM, spec 
 	var rollback createRollback
 	defer func() {
 		if retErr != nil {
-			rollback.run(dsm.Ip)
+			rollback.run(dsm)
 		}
 	}()
 
@@ -41,7 +42,7 @@ func (service *DsmService) createSMBorNFSVolumeBySnapshot(dsm *webapi.DSM, spec 
 	}
 
 	shareCloneSpec := webapi.ShareCloneSpec{
-		Name: spec.ShareName,
+		Name:     spec.ShareName,
 		Snapshot: srcSnapshot.Time,
 		ShareInfo: webapi.ShareInfo{
 			Name:                spec.ShareName,
@@ -61,7 +62,7 @@ func (service *DsmService) createSMBorNFSVolumeBySnapshot(dsm *webapi.DSM, spec 
 		// The share is from an earlier attempt, so it is not ours to remove.
 	} else {
 		shareName := spec.ShareName
-		rollback.add(fmt.Sprintf("share(%s)", shareName), func() error { return dsm.ShareDelete(shareName) })
+		rollback.add(fmt.Sprintf("share(%s)", shareName), func(dsm *webapi.DSM) error { return dsm.ShareDelete(shareName) })
 	}
 
 	shareInfo, err := dsm.ShareGet(spec.ShareName)
@@ -107,7 +108,7 @@ func (service *DsmService) createSMBorNFSVolumeByVolume(dsm *webapi.DSM, spec *m
 	var rollback createRollback
 	defer func() {
 		if retErr != nil {
-			rollback.run(dsm.Ip)
+			rollback.run(dsm)
 		}
 	}()
 
@@ -119,11 +120,11 @@ func (service *DsmService) createSMBorNFSVolumeByVolume(dsm *webapi.DSM, spec *m
 	}
 
 	shareCloneSpec := webapi.ShareCloneSpec{
-		Name: spec.ShareName,
+		Name:     spec.ShareName,
 		Snapshot: "",
 		ShareInfo: webapi.ShareInfo{
 			Name:                spec.ShareName,
-			VolPath:             srcShareInfo.VolPath, // must be same with srcShare location
+			VolPath:             srcShareInfo.VolPath,                                    // must be same with srcShare location
 			Desc:                "Cloned from [" + srcShareInfo.Name + "] by csi driver", // max: 64
 			EnableRecycleBin:    srcShareInfo.EnableRecycleBin,
 			RecycleBinAdminOnly: srcShareInfo.RecycleBinAdminOnly,
@@ -138,7 +139,7 @@ func (service *DsmService) createSMBorNFSVolumeByVolume(dsm *webapi.DSM, spec *m
 		}
 	} else {
 		shareName := spec.ShareName
-		rollback.add(fmt.Sprintf("share(%s)", shareName), func() error { return dsm.ShareDelete(shareName) })
+		rollback.add(fmt.Sprintf("share(%s)", shareName), func(dsm *webapi.DSM) error { return dsm.ShareDelete(shareName) })
 	}
 
 	shareInfo, err := dsm.ShareGet(spec.ShareName)
@@ -177,7 +178,7 @@ func (service *DsmService) createSMBorNFSVolumeByDsm(dsm *webapi.DSM, spec *mode
 	var rollback createRollback
 	defer func() {
 		if retErr != nil {
-			rollback.run(dsm.Ip)
+			rollback.run(dsm)
 		}
 	}()
 
@@ -228,7 +229,7 @@ func (service *DsmService) createSMBorNFSVolumeByDsm(dsm *webapi.DSM, spec *mode
 		}
 	} else {
 		shareName := spec.ShareName
-		rollback.add(fmt.Sprintf("share(%s)", shareName), func() error { return dsm.ShareDelete(shareName) })
+		rollback.add(fmt.Sprintf("share(%s)", shareName), func(dsm *webapi.DSM) error { return dsm.ShareDelete(shareName) })
 	}
 
 	shareInfo, err := dsm.ShareGet(spec.ShareName)
@@ -267,8 +268,8 @@ func (service *DsmService) shareToVolume(dsm *webapi.DSM, share webapi.ShareInfo
 // findSMBorNFSVolume returns the one share matching pred, classifying only that
 // share. It reports (nil, nil) when no share matched and every DSM could be
 // listed, so the caller may then conclude the volume is not a share at all.
-func (service *DsmService) findSMBorNFSVolume(pred func(webapi.ShareInfo) bool) (volume *models.K8sVolumeRespSpec, listErr error) {
-	for _, dsm := range service.allDsms() {
+func (service *DsmService) findSMBorNFSVolume(ctx context.Context, pred func(webapi.ShareInfo) bool) (volume *models.K8sVolumeRespSpec, listErr error) {
+	for _, dsm := range service.allDsms(ctx) {
 		if dsm.IsUC() {
 			continue
 		}
@@ -302,8 +303,8 @@ func (service *DsmService) findSMBorNFSVolume(pred func(webapi.ShareInfo) bool) 
 // protocols: DSM rejects the privilege API while it is busy, and treating a
 // share that could not be classified as one that no longer exists is what makes
 // DeleteVolume report success without deleting anything.
-func (service *DsmService) listSMBorNFSVolumes(dsmIp string) (infos []*models.K8sVolumeRespSpec, listErr error) {
-	for _, dsm := range service.allDsms() {
+func (service *DsmService) listSMBorNFSVolumes(ctx context.Context, dsmIp string) (infos []*models.K8sVolumeRespSpec, listErr error) {
+	for _, dsm := range service.allDsms(ctx) {
 		if dsmIp != "" && dsmIp != dsm.Ip {
 			continue
 		}
@@ -337,7 +338,7 @@ func (service *DsmService) listSMBorNFSVolumes(dsmIp string) (infos []*models.K8
 }
 
 func (service *DsmService) listSMBorNFSSnapshotsByDsm(dsm *webapi.DSM) (infos []*models.K8sSnapshotRespSpec) {
-	volumes, err := service.listSMBorNFSVolumes(dsm.Ip)
+	volumes, err := service.listSMBorNFSVolumes(dsm.Context(), dsm.Ip)
 	if err != nil {
 		// Snapshot listing is best-effort; log the gap rather than hiding it.
 		log.Errorf("[%s] Share list was incomplete while listing snapshots: %v", dsm.Ip, err)
@@ -356,8 +357,8 @@ func (service *DsmService) listSMBorNFSSnapshotsByDsm(dsm *webapi.DSM) (infos []
 	return infos
 }
 
-func (service *DsmService) getSMBorNFSSnapshot(snapshotUuid string) *models.K8sSnapshotRespSpec {
-	for _, dsm := range service.allDsms() {
+func (service *DsmService) getSMBorNFSSnapshot(ctx context.Context, snapshotUuid string) *models.K8sSnapshotRespSpec {
+	for _, dsm := range service.allDsms(ctx) {
 		snapshots := service.listSMBorNFSSnapshotsByDsm(dsm)
 		for _, snap := range snapshots {
 			if snap.Uuid == snapshotUuid {

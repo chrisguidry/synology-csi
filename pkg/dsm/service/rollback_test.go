@@ -7,6 +7,8 @@ package service
 import (
 	"errors"
 	"testing"
+
+	"github.com/SynologyOpenSource/synology-csi/pkg/dsm/webapi"
 )
 
 func TestRollbackUndoesNewestFirst(t *testing.T) {
@@ -16,10 +18,10 @@ func TestRollbackUndoesNewestFirst(t *testing.T) {
 	// A volume is built up in order, so it has to be taken apart in reverse: the
 	// target maps the LUN, and removing the LUN first would leave a mapping
 	// pointing at nothing.
-	rollback.add("LUN", func() error { order = append(order, "LUN"); return nil })
-	rollback.add("target", func() error { order = append(order, "target"); return nil })
+	rollback.add("LUN", func(*webapi.DSM) error { order = append(order, "LUN"); return nil })
+	rollback.add("target", func(*webapi.DSM) error { order = append(order, "target"); return nil })
 
-	rollback.run("1.2.3.4")
+	rollback.run(&webapi.DSM{Ip: "1.2.3.4"})
 
 	if len(order) != 2 || order[0] != "target" || order[1] != "LUN" {
 		t.Errorf("expected the target to be removed before the LUN, got %v", order)
@@ -30,13 +32,13 @@ func TestRollbackKeepsGoingAfterAStepFails(t *testing.T) {
 	var ran []string
 	var rollback createRollback
 
-	rollback.add("LUN", func() error { ran = append(ran, "LUN"); return nil })
-	rollback.add("target", func() error {
+	rollback.add("LUN", func(*webapi.DSM) error { ran = append(ran, "LUN"); return nil })
+	rollback.add("target", func(*webapi.DSM) error {
 		ran = append(ran, "target")
 		return errors.New("DSM is busy")
 	})
 
-	rollback.run("1.2.3.4")
+	rollback.run(&webapi.DSM{Ip: "1.2.3.4"})
 
 	// Giving up on the first failure would strand the LUN as well, turning one
 	// leftover resource into two.
@@ -50,7 +52,7 @@ func TestRollbackDoesNothingWhenNoStepsWereRegistered(t *testing.T) {
 	// attempt, so nothing was registered and nothing may be deleted.
 	var rollback createRollback
 
-	rollback.run("1.2.3.4") // must not panic
+	rollback.run(&webapi.DSM{Ip: "1.2.3.4"}) // must not panic
 
 	if len(rollback.steps) != 0 {
 		t.Errorf("expected no steps, got %d", len(rollback.steps))
@@ -64,12 +66,12 @@ func createLikeFunc(created bool, fail bool, deleted *bool) (err error) {
 	var rollback createRollback
 	defer func() {
 		if err != nil {
-			rollback.run("1.2.3.4")
+			rollback.run(&webapi.DSM{Ip: "1.2.3.4"})
 		}
 	}()
 
 	if created {
-		rollback.add("share", func() error { *deleted = true; return nil })
+		rollback.add("share", func(*webapi.DSM) error { *deleted = true; return nil })
 	}
 
 	if fail {

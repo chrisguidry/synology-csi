@@ -5,12 +5,12 @@ package webapi
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/SynologyOpenSource/synology-csi/pkg/logger"
+	"github.com/SynologyOpenSource/synology-csi/pkg/utils"
+	log "github.com/sirupsen/logrus"
 	"net/url"
 	"strconv"
 	"strings"
-	log "github.com/sirupsen/logrus"
-	"github.com/SynologyOpenSource/synology-csi/pkg/logger"
-	"github.com/SynologyOpenSource/synology-csi/pkg/utils"
 )
 
 type LunInfo struct {
@@ -72,9 +72,9 @@ type LunUpdateSpec struct {
 }
 
 type LunCloneSpec struct {
-	Name            string
-	SrcLunUuid      string
-	Location        string
+	Name       string
+	SrcLunUuid string
+	Location   string
 }
 
 type TargetCreateSpec struct {
@@ -105,11 +105,16 @@ func errCodeMapping(errCode int, oriErr error) error {
 	}
 
 	if errCode > 18990000 {
-		return utils.IscsiDefaultError{errCode}
+		return utils.IscsiDefaultError{ErrCode: errCode}
 	}
 	return oriErr
 }
 
+// LunList returns every LUN of the listed types in one response; the API
+// takes no offset or limit. The API leaves out every type the request does
+// not name, so a type missing from the list hides the driver's own LUNs of
+// that type from every lookup. A volume lookup reads a mapped LUN the list
+// leaves out on its own.
 func (dsm *DSM) LunList() ([]LunInfo, error) {
 	params := url.Values{}
 	params.Add("api", "SYNO.Core.ISCSI.LUN")

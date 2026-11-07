@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -72,7 +73,7 @@ func TestAFailedFlushIsHarmlessOnlyWhenTheLunIsKnownToBeGone(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			ns := nodeServerOnFakeDSM(t, c.luns, c.targetsFail)
 
-			if got := ns.lunWasDeleted("this"); got != c.harmless {
+			if got := ns.lunWasDeleted(context.Background(), "this"); got != c.harmless {
 				t.Errorf("lunWasDeleted = %v, want %v", got, c.harmless)
 			}
 		})

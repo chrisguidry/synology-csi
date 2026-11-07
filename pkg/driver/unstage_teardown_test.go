@@ -79,7 +79,7 @@ func newTestInitiator(e *recordingExecutor) *initiatorDriver {
 // keeps trying to log in to a target DSM has already deleted.
 func TestLogoutRemovesTheNodeRecord(t *testing.T) {
 	e := &recordingExecutor{sessionOutput: sessionLine(testIqn)}
-	if err := newTestInitiator(e).logout(testIqn, "1.2.3.4"); err != nil {
+	if err := newTestInitiator(e).logout(context.Background(), testIqn, "1.2.3.4"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -101,7 +101,7 @@ func TestLogoutRemovesTheNodeRecord(t *testing.T) {
 // exactly when it matters.
 func TestNodeRecordIsRemovedEvenWithNoSession(t *testing.T) {
 	e := &recordingExecutor{sessionOutput: ""} // no sessions at all
-	if err := newTestInitiator(e).logout(testIqn, "1.2.3.4"); err != nil {
+	if err := newTestInitiator(e).logout(context.Background(), testIqn, "1.2.3.4"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestNodeRecordIsRemovedEvenWithNoSession(t *testing.T) {
 // Detaching succeeded; a leftover record is noise, not a failure to report.
 func TestLogoutSucceedsWhenTheRecordCannotBeRemoved(t *testing.T) {
 	e := &recordingExecutor{sessionOutput: sessionLine(testIqn), fail: "-o delete"}
-	if err := newTestInitiator(e).logout(testIqn, "1.2.3.4"); err != nil {
+	if err := newTestInitiator(e).logout(context.Background(), testIqn, "1.2.3.4"); err != nil {
 		t.Errorf("a record that could not be removed should not fail the unstage, got %v", err)
 	}
 }

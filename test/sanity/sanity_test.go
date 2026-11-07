@@ -19,7 +19,13 @@ const (
 	SecretsFilePath = "./sanity-test-secret-file.yaml"
 )
 
+// TestSanity runs the CSI sanity suite against the real DSMs that
+// ConfigPath names, so it creates and deletes volumes on them. With no
+// config there is no DSM to run against, and the suite is skipped.
 func TestSanity(t *testing.T) {
+	if _, err := os.Stat(ConfigPath); os.IsNotExist(err) {
+		t.Skipf("no DSM to test against: %s does not exist", ConfigPath)
+	}
 	nodeID := "CSINode"
 
 	endpointFile, err := ioutil.TempFile("", "csi-gcs.*.sock")
