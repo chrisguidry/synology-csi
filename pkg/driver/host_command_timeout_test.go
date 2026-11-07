@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,10 +34,10 @@ func TestAHungIscsiadmIsStopped(t *testing.T) {
 		name string
 		run  func(tools) error
 	}{
-		{"login", func(t tools) error { return t.iscsiadm_login(testIqn, testPortal) }},
-		{"logout", func(t tools) error { return t.iscsiadm_logout(testIqn) }},
-		{"discovery", func(t tools) error { return t.iscsiadm_discovery(testPortal) }},
-		{"delete node", func(t tools) error { return t.iscsiadm_delete_node(testIqn, testPortal) }},
+		{"login", func(t tools) error { return t.iscsiadm_login(context.Background(), testIqn, testPortal) }},
+		{"logout", func(t tools) error { return t.iscsiadm_logout(context.Background(), testIqn) }},
+		{"discovery", func(t tools) error { return t.iscsiadm_discovery(context.Background(), testPortal) }},
+		{"delete node", func(t tools) error { return t.iscsiadm_delete_node(context.Background(), testIqn, testPortal) }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			hung := hungCommand(t, "iscsiadm")
@@ -60,9 +61,11 @@ func TestAHungNvmeIsStopped(t *testing.T) {
 		name string
 		run  func(tools) error
 	}{
-		{"discover", func(t tools) error { return t.nvmeDiscover("1.2.3.4", NVMePort, "tcp", "") }},
-		{"connect", func(t tools) error { return t.nvmeConnect("1.2.3.4", NVMePort, "tcp", "nqn.test", "") }},
-		{"disconnect", func(t tools) error { return t.nvmeDisconnect("nqn.test") }},
+		{"discover", func(t tools) error { return t.nvmeDiscover(context.Background(), "1.2.3.4", NVMePort, "tcp", "") }},
+		{"connect", func(t tools) error {
+			return t.nvmeConnect(context.Background(), "1.2.3.4", NVMePort, "tcp", "nqn.test", "")
+		}},
+		{"disconnect", func(t tools) error { return t.nvmeDisconnect(context.Background(), "nqn.test") }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			hung := hungCommand(t, "nvme")
@@ -75,6 +78,37 @@ func TestAHungNvmeIsStopped(t *testing.T) {
 			}
 			if elapsed := time.Since(started); elapsed > 10*time.Second {
 				t.Errorf("the hung nvme ran for %v", elapsed)
+			}
+		})
+	}
+}
+
+// A command stops when the CSI call that ran it ends, before its own
+// timeout, so a retry of the call never runs beside the command it started.
+func TestACancelledCallStopsItsCommand(t *testing.T) {
+	for _, c := range []struct {
+		command string
+		run     func(context.Context, tools) error
+	}{
+		{"iscsiadm", func(ctx context.Context, t tools) error { return t.iscsiadm_login(ctx, testIqn, testPortal) }},
+		{"nvme", func(ctx context.Context, t tools) error {
+			return t.nvmeConnect(ctx, "1.2.3.4", NVMePort, "tcp", "nqn.test", "")
+		}},
+	} {
+		t.Run(c.command, func(t *testing.T) {
+			hung := hungCommand(t, c.command)
+			hung.commandTimeout = 0
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			started := time.Now()
+
+			err := c.run(ctx, hung)
+
+			if err == nil {
+				t.Error("a cancelled command reported success")
+			}
+			if elapsed := time.Since(started); elapsed > 10*time.Second {
+				t.Errorf("the command outlived its call by %v", elapsed)
 			}
 		})
 	}

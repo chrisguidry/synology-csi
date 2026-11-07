@@ -52,11 +52,13 @@ const (
 )
 
 // hostCommandTimeout stops an iscsiadm or nvme command that never returns,
-// as when iscsid stops answering its socket or a target stops answering, so
-// a stage or an unstage fails and the kubelet calls again instead of waiting
-// on it forever. It is longer than a login to an unreachable portal takes to
-// give up under open-iscsi's default retries, so it cuts short no login that
-// could still succeed.
+// as when iscsid stops answering its socket or a target stops answering. Each
+// command also stops when the CSI call that ran it ends: the kubelet gives up
+// on a call at its own deadline and calls again, and a command left running
+// from the first call would race the second on the same volume. The timeout
+// bounds a command whose call carries no deadline. It is longer than a login
+// to an unreachable portal takes to give up under open-iscsi's default
+// retries, so it cuts short no login that could still succeed.
 const hostCommandTimeout = 3 * time.Minute
 
 type tools struct {
@@ -72,22 +74,20 @@ func NewTools(executor hostexec.Executor) tools {
 	}
 }
 
-func (t *tools) iscsiadm(cmdArgs ...string) utilexec.Cmd {
-	return t.timedCommand("iscsiadm", cmdArgs...)
+func (t *tools) iscsiadm(ctx context.Context, cmdArgs ...string) ([]byte, error) {
+	return t.runTimed(ctx, "iscsiadm", cmdArgs...)
 }
 
-// timedCommand is a host command that is killed once hostCommandTimeout
-// passes.
-func (t *tools) timedCommand(command string, cmdArgs ...string) utilexec.Cmd {
+// runTimed runs a host command and returns its combined output. The command
+// is killed when ctx ends or hostCommandTimeout passes, whichever is first.
+func (t *tools) runTimed(ctx context.Context, command string, cmdArgs ...string) ([]byte, error) {
 	timeout := hostCommandTimeout
 	if t.commandTimeout != 0 {
 		timeout = t.commandTimeout
 	}
-	// The caller runs the command after this returns, so the timer, not a
-	// deferred cancel, ends the context.
-	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(timeout, cancel)
-	return t.executor.CommandContext(ctx, command, cmdArgs...)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return t.executor.CommandContext(ctx, command, cmdArgs...).CombinedOutput()
 }
 
 // parseSession takes the raw stdout from the `iscsiadm -m session` command and encodes it into an iSCSI session type
@@ -120,9 +120,8 @@ func parseSessions(lines string) []iscsiSession {
 	return sessions
 }
 
-func (t *tools) iscsiadm_session() []iscsiSession {
-	cmd := t.iscsiadm("-m", "session")
-	out, err := cmd.CombinedOutput()
+func (t *tools) iscsiadm_session(ctx context.Context) []iscsiSession {
+	out, err := t.iscsiadm(ctx, "-m", "session")
 	if err != nil {
 		exitErr, ok := err.(utilexec.ExitError)
 		if ok && exitErr.ExitStatus() == 21 { // iscsiadm: No active sessions
@@ -136,54 +135,51 @@ func (t *tools) iscsiadm_session() []iscsiSession {
 	return parseSessions(string(out))
 }
 
-func (t *tools) iscsiadm_discovery(portal string) error {
-	cmd := t.iscsiadm(
+func (t *tools) iscsiadm_discovery(ctx context.Context, portal string) error {
+	out, err := t.iscsiadm(ctx,
 		"-m", "discoverydb",
 		"--type", "sendtargets",
 		"--portal", portal,
 		"--op", "new",
 		"--discover")
-	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s (%v)", string(out), err)
 	}
 	return nil
 }
 
-func (t *tools) iscsiadm_login(iqn, portal string) error {
-	cmd := t.iscsiadm(
+func (t *tools) iscsiadm_login(ctx context.Context, iqn, portal string) error {
+	out, err := t.iscsiadm(ctx,
 		"-m", "node",
 		"--targetname", iqn,
 		"--portal", portal,
 		"--login")
-	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s (%v)", string(out), err)
 	}
 	return nil
 }
 
-func (t *tools) iscsiadm_update_node_startup(iqn, portal string) error {
-	cmd := t.iscsiadm(
+func (t *tools) iscsiadm_update_node_startup(ctx context.Context, iqn, portal string) error {
+	out, err := t.iscsiadm(ctx,
 		"-m", "node",
 		"--targetname", iqn,
 		"--portal", portal,
 		"--op", "update",
 		"--name", "node.startup",
 		"--value", "manual")
-	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s (%v)", string(out), err)
 	}
 	return nil
 }
 
-func (t *tools) iscsiadm_logout(iqn string) error {
-	cmd := t.iscsiadm(
+func (t *tools) iscsiadm_logout(ctx context.Context, iqn string) error {
+	_, err := t.iscsiadm(ctx,
 		"-m", "node",
 		"--targetname", iqn,
 		"--logout")
-	if _, err := cmd.CombinedOutput(); err != nil {
+	if err != nil {
 		return err
 	}
 	return nil
@@ -194,13 +190,13 @@ func (t *tools) iscsiadm_logout(iqn string) error {
 // behind, and iscsid then retries the login every 60 seconds against a target
 // DSM has already deleted. Reported in #138, where a node kept doing that
 // across reboots until the record was removed by hand.
-func (t *tools) iscsiadm_delete_node(iqn string, portal string) error {
-	cmd := t.iscsiadm(
+func (t *tools) iscsiadm_delete_node(ctx context.Context, iqn string, portal string) error {
+	_, err := t.iscsiadm(ctx,
 		"-m", "node",
 		"--targetname", iqn,
 		"--portal", portal,
 		"-o", "delete")
-	if _, err := cmd.CombinedOutput(); err != nil {
+	if err != nil {
 		return err
 	}
 	return nil
@@ -228,19 +224,19 @@ func (t *tools) flushDeviceBuffers(devPath string) error {
 	return unix.IoctlSetInt(int(f.Fd()), unix.BLKFLSBUF, 0)
 }
 
-func (t *tools) iscsiadm_rescan(iqn string) error {
-	cmd := t.iscsiadm(
+func (t *tools) iscsiadm_rescan(ctx context.Context, iqn string) error {
+	_, err := t.iscsiadm(ctx,
 		"-m", "node",
 		"--targetname", iqn,
 		"-R")
-	if _, err := cmd.CombinedOutput(); err != nil {
+	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (t *tools) hasSession(targetIqn string, portal string) bool {
-	sessions := t.iscsiadm_session()
+func (t *tools) hasSession(ctx context.Context, targetIqn string, portal string) bool {
+	sessions := t.iscsiadm_session(ctx)
 
 	for _, s := range sessions {
 		if targetIqn == s.Iqn && (portal == s.Portal || portal == "") {
@@ -251,8 +247,8 @@ func (t *tools) hasSession(targetIqn string, portal string) bool {
 	return false
 }
 
-func (t *tools) listSessionsByIqn(targetIqn string) (matchedSessions []iscsiSession) {
-	sessions := t.iscsiadm_session()
+func (t *tools) listSessionsByIqn(ctx context.Context, targetIqn string) (matchedSessions []iscsiSession) {
+	sessions := t.iscsiadm_session(ctx)
 
 	for _, s := range sessions {
 		if targetIqn == s.Iqn {
@@ -263,23 +259,23 @@ func (t *tools) listSessionsByIqn(targetIqn string) (matchedSessions []iscsiSess
 	return matchedSessions
 }
 
-func (d *initiatorDriver) login(targetIqn string, portal string) error {
-	if d.tools.hasSession(targetIqn, portal) {
+func (d *initiatorDriver) login(ctx context.Context, targetIqn string, portal string) error {
+	if d.tools.hasSession(ctx, targetIqn, portal) {
 		log.Infof("Session[%s] already exists.", targetIqn)
 		return nil
 	}
 
-	if err := d.tools.iscsiadm_discovery(portal); err != nil {
+	if err := d.tools.iscsiadm_discovery(ctx, portal); err != nil {
 		log.Errorf("Failed to discover portal [%s]: %v", portal, err)
 		return err
 	}
 
-	if err := d.tools.iscsiadm_login(targetIqn, portal); err != nil {
+	if err := d.tools.iscsiadm_login(ctx, targetIqn, portal); err != nil {
 		log.Errorf("Failed in login of the target: %v", err)
 		return err
 	}
 
-	if err := d.tools.iscsiadm_update_node_startup(targetIqn, portal); err != nil {
+	if err := d.tools.iscsiadm_update_node_startup(ctx, targetIqn, portal); err != nil {
 		log.Warnf("Failed to update target node.startup to manual: %v", err)
 	}
 
@@ -288,11 +284,11 @@ func (d *initiatorDriver) login(targetIqn string, portal string) error {
 	return nil
 }
 
-func (d *initiatorDriver) logout(targetIqn string, ip string) error {
+func (d *initiatorDriver) logout(ctx context.Context, targetIqn string, ip string) error {
 	portal := fmt.Sprintf("%s:%d", ip, ISCSIPort)
 
-	if d.tools.hasSession(targetIqn, "") {
-		if err := d.tools.iscsiadm_logout(targetIqn); err != nil {
+	if d.tools.hasSession(ctx, targetIqn, "") {
+		if err := d.tools.iscsiadm_logout(ctx, targetIqn); err != nil {
 			log.Errorf("Failed in logout of the target.\nTarget [%s], Portal [%s], Err[%v]",
 				targetIqn, portal, err)
 			return err
@@ -306,7 +302,7 @@ func (d *initiatorDriver) logout(targetIqn string, ip string) error {
 	// retrying forever is exactly the one where the session is already gone but
 	// the record is not, so returning early on "no session" would skip the
 	// cleanup precisely when it is needed.
-	if err := d.tools.iscsiadm_delete_node(targetIqn, portal); err != nil {
+	if err := d.tools.iscsiadm_delete_node(ctx, targetIqn, portal); err != nil {
 		// Not fatal. The volume is detached either way; what is left behind is
 		// a record that makes noise rather than one that breaks anything.
 		log.Warnf("Failed to remove the iSCSI node record for target [%s] portal [%s], "+
@@ -316,14 +312,14 @@ func (d *initiatorDriver) logout(targetIqn string, ip string) error {
 	return nil
 }
 
-func (d *initiatorDriver) rescan(targetIqn string) error {
-	if !d.tools.hasSession(targetIqn, "") {
+func (d *initiatorDriver) rescan(ctx context.Context, targetIqn string) error {
+	if !d.tools.hasSession(ctx, targetIqn, "") {
 		msg := fmt.Sprintf("Session[%s] doesn't exist.", targetIqn)
 		log.Error(msg)
 		return errors.New(msg)
 	}
 
-	if err := d.tools.iscsiadm_rescan(targetIqn); err != nil {
+	if err := d.tools.iscsiadm_rescan(ctx, targetIqn); err != nil {
 		log.Errorf("Failed in rescan of the target.\nTarget [%s], Err[%v]",
 			targetIqn, err)
 		return err

@@ -5,21 +5,21 @@
 package driver
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
-	utilexec "k8s.io/utils/exec"
 	log "github.com/sirupsen/logrus"
 )
 
 // Namespace represents a single NVMe namespace device visible to the node.
 type Namespace struct {
-	DevPath    string // e.g. /dev/nvme1n1
-	Subsystem  string // e.g. nqn.2014-08.org.nvmexpress:uuid:...
-	Uuid       string
+	DevPath   string // e.g. /dev/nvme1n1
+	Subsystem string // e.g. nqn.2014-08.org.nvmexpress:uuid:...
+	Uuid      string
 }
 
 var (
@@ -30,44 +30,41 @@ var (
 const (
 	NVME_SUBSYSTEM_PATH = "/sys/class/nvme-subsystem"
 	NVME_FABRICS_PATH   = "/sys/class/nvme-fabrics/ctl"
-	NVMePort = 4420
+	NVMePort            = 4420
 )
 
-func (t *tools) nvme(cmdArgs ...string) utilexec.Cmd {
-	return t.timedCommand("nvme", cmdArgs...)
+func (t *tools) nvme(ctx context.Context, cmdArgs ...string) ([]byte, error) {
+	return t.runTimed(ctx, "nvme", cmdArgs...)
 }
 
-func (t *tools) nvmeDiscover(ip string, port int, transport string, hostNqn string) error {
+func (t *tools) nvmeDiscover(ctx context.Context, ip string, port int, transport string, hostNqn string) error {
 	args := []string{"discover", "-t", transport, "-a", ip, "-s", fmt.Sprint(port)}
 	if hostNqn != "" {
 		args = append(args, "--hostnqn", hostNqn)
 	}
 
-	cmd := t.nvme(args...)
-	out, err := cmd.CombinedOutput()
+	out, err := t.nvme(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("%s (%v)", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
 
-func (t *tools) nvmeConnect(ip string, port int, transport string, nqn string, hostNqn string) error {
+func (t *tools) nvmeConnect(ctx context.Context, ip string, port int, transport string, nqn string, hostNqn string) error {
 	args := []string{"connect", "-t", transport, "-a", ip, "-s", fmt.Sprint(port), "-n", nqn}
 	if hostNqn != "" {
 		args = append(args, "--hostnqn", hostNqn)
 	}
 
-	cmd := t.nvme(args...)
-	out, err := cmd.CombinedOutput()
+	out, err := t.nvme(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("%s (%v)", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
 
-func (t *tools) nvmeDisconnect(nqn string) error {
-	cmd := t.nvme("disconnect", "-n", nqn)
-	out, err := cmd.CombinedOutput()
+func (t *tools) nvmeDisconnect(ctx context.Context, nqn string) error {
+	out, err := t.nvme(ctx, "disconnect", "-n", nqn)
 	if err != nil {
 		return fmt.Errorf("%s (%v)", strings.TrimSpace(string(out)), err)
 	}

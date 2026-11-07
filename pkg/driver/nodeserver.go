@@ -75,10 +75,10 @@ func waitForDevicePathToExist(path string) error {
 }
 
 // for unstage, resize volume
-func (t *tools) getExistedVolumeMountPath(targetIqn string, mappingIndex int) string {
+func (t *tools) getExistedVolumeMountPath(ctx context.Context, targetIqn string, mappingIndex int) string {
 	paths := []string{}
 
-	sessions := t.listSessionsByIqn(targetIqn)
+	sessions := t.listSessionsByIqn(ctx, targetIqn)
 	for _, session := range sessions {
 		paths = append(paths, fmt.Sprintf("%sip-%s-iscsi-%s-lun-%d", "/dev/disk/by-path/", session.Portal, targetIqn, mappingIndex))
 	}
@@ -245,7 +245,7 @@ func (ns *nodeServer) loginNVMeSubsystem(ctx context.Context, volumeId string) (
 	}
 
 	if !hasNVMeSession(targetIp, NVMePort, "tcp", subsysNqn) {
-		if err := ns.tools.nvmeConnect(targetIp, NVMePort, "tcp", subsysNqn, ""); err != nil {
+		if err := ns.tools.nvmeConnect(ctx, targetIp, NVMePort, "tcp", subsysNqn, ""); err != nil {
 			return nil, status.Errorf(codes.Internal, "Failed to connect to NVMe subsystem %s at %s:%d: %v", subsysNqn, targetIp, NVMePort, err)
 		}
 	}
@@ -260,12 +260,12 @@ func (ns *nodeServer) loginNVMeSubsystem(ctx context.Context, volumeId string) (
 	return paths, nil
 }
 
-func (ns *nodeServer) logoutNVMeSubsystem(nqn string) {
+func (ns *nodeServer) logoutNVMeSubsystem(ctx context.Context, nqn string) {
 	if nqn == "" {
 		return
 	}
 
-	if err := ns.tools.nvmeDisconnect(nqn); err != nil {
+	if err := ns.tools.nvmeDisconnect(ctx, nqn); err != nil {
 		log.Errorf("Failed to disconnect NVMe subsystem [%s]: %v", nqn, err)
 	}
 }
@@ -292,7 +292,7 @@ func (ns *nodeServer) loginTarget(ctx context.Context, volumeId string) (paths [
 	iqn = k8sVolume.Target.Iqn
 	lun = k8sVolume.Target.MappedLuns[0].MappingIndex
 	for _, portal := range portals {
-		if err := ns.Initiator.login(iqn, portal); err != nil {
+		if err := ns.Initiator.login(ctx, iqn, portal); err != nil {
 			return nil, "", 0, status.Error(codes.Internal,
 				fmt.Sprintf("Failed to login with target iqn [%s], err: %v", iqn, err))
 		}
@@ -316,7 +316,7 @@ func (ns *nodeServer) logoutTarget(ctx context.Context, k8sVolume *models.K8sVol
 
 	// Assume target and lun 1-1 mapping
 	mappingIndex := k8sVolume.Target.MappedLuns[0].MappingIndex
-	volumeMountPath := ns.tools.getExistedVolumeMountPath(k8sVolume.Target.Iqn, mappingIndex)
+	volumeMountPath := ns.tools.getExistedVolumeMountPath(ctx, k8sVolume.Target.Iqn, mappingIndex)
 
 	// Push anything still in the page cache out to the LUN before the session
 	// goes away. A filesystem volume was already flushed by the Unmount above,
@@ -347,7 +347,7 @@ func (ns *nodeServer) logoutTarget(ctx context.Context, k8sVolume *models.K8sVol
 		}
 	}
 
-	ns.Initiator.logout(k8sVolume.Target.Iqn, k8sVolume.DsmIp)
+	ns.Initiator.logout(ctx, k8sVolume.Target.Iqn, k8sVolume.DsmIp)
 }
 
 // reportFailedFlush logs a failed pre-logout flush as an error, or only as
@@ -845,7 +845,7 @@ func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 	if k8sVolume.Protocol == utils.ProtocolIscsi {
 		ns.logoutTarget(ctx, k8sVolume)
 	} else if k8sVolume.Protocol == utils.ProtocolNvme {
-		ns.logoutNVMeSubsystem(k8sVolume.Subsystem.Nqn)
+		ns.logoutNVMeSubsystem(ctx, k8sVolume.Subsystem.Nqn)
 	}
 
 	return &csi.NodeUnstageVolumeResponse{}, nil
@@ -1139,13 +1139,13 @@ func (ns *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandV
 
 	var volumeMountPath string
 	if k8sVolume.Protocol == utils.ProtocolIscsi {
-		if err := ns.Initiator.rescan(k8sVolume.Target.Iqn); err != nil {
+		if err := ns.Initiator.rescan(ctx, k8sVolume.Target.Iqn); err != nil {
 			return nil, status.Error(codes.Internal, fmt.Sprintf("Failed to rescan. err: %v", err))
 		}
 
 		// Assume target and lun 1-1 mapping
 		mappingIndex := k8sVolume.Target.MappedLuns[0].MappingIndex
-		volumeMountPath = ns.tools.getExistedVolumeMountPath(k8sVolume.Target.Iqn, mappingIndex)
+		volumeMountPath = ns.tools.getExistedVolumeMountPath(ctx, k8sVolume.Target.Iqn, mappingIndex)
 		if volumeMountPath == "" {
 			return nil, status.Error(codes.Internal, "Can't get volume mount path")
 		}
