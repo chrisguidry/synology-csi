@@ -34,7 +34,7 @@ const (
 )
 
 func (t *tools) nvme(cmdArgs ...string) utilexec.Cmd {
-	return t.executor.Command("nvme", cmdArgs...)
+	return t.timedCommand("nvme", cmdArgs...)
 }
 
 func (t *tools) nvmeDiscover(ip string, port int, transport string, hostNqn string) error {

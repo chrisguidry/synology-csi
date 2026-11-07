@@ -51,16 +51,17 @@ const (
 	ISCSIPort = 3260
 )
 
-// iscsiadmTimeout stops an iscsiadm that iscsid never answers, so a stage
-// or an unstage fails and the kubelet calls again instead of waiting on it
-// forever. It is longer than a login to an unreachable portal takes to give
-// up under open-iscsi's default retries, so it cuts short no login that
+// hostCommandTimeout stops an iscsiadm or nvme command that never returns,
+// as when iscsid stops answering its socket or a target stops answering, so
+// a stage or an unstage fails and the kubelet calls again instead of waiting
+// on it forever. It is longer than a login to an unreachable portal takes to
+// give up under open-iscsi's default retries, so it cuts short no login that
 // could still succeed.
-const iscsiadmTimeout = 3 * time.Minute
+const hostCommandTimeout = 3 * time.Minute
 
 type tools struct {
 	executor hostexec.Executor
-	// commandTimeout replaces iscsiadmTimeout when it is set.
+	// commandTimeout replaces hostCommandTimeout when it is set.
 	commandTimeout time.Duration
 }
 
@@ -72,7 +73,13 @@ func NewTools(executor hostexec.Executor) tools {
 }
 
 func (t *tools) iscsiadm(cmdArgs ...string) utilexec.Cmd {
-	timeout := iscsiadmTimeout
+	return t.timedCommand("iscsiadm", cmdArgs...)
+}
+
+// timedCommand is a host command that is killed once hostCommandTimeout
+// passes.
+func (t *tools) timedCommand(command string, cmdArgs ...string) utilexec.Cmd {
+	timeout := hostCommandTimeout
 	if t.commandTimeout != 0 {
 		timeout = t.commandTimeout
 	}
@@ -80,7 +87,7 @@ func (t *tools) iscsiadm(cmdArgs ...string) utilexec.Cmd {
 	// deferred cancel, ends the context.
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(timeout, cancel)
-	return t.executor.CommandContext(ctx, "iscsiadm", cmdArgs...)
+	return t.executor.CommandContext(ctx, command, cmdArgs...)
 }
 
 // parseSession takes the raw stdout from the `iscsiadm -m session` command and encodes it into an iSCSI session type
