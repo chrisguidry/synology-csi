@@ -41,12 +41,12 @@ func (dsm *DSM) GetAnotherController() (*DSM, error) {
 		return nil, err
 	}
 
-	dsm.Controller = "A"
+	// Concurrent CSI calls share dsm, so only the new DSM records which
+	// controller it is.
 	anotherDsm.Controller = "B"
 	anotherList := netListB
 	for _, netIf := range netListB {
 		if netIf.Ip == ips[0] {
-			dsm.Controller = "B"
 			anotherDsm.Controller = "A"
 			anotherList = netListA
 			break
@@ -82,11 +82,10 @@ func CheckIpReachable(ip string, port int) bool {
 	seconds := 5
 	timeOut := time.Duration(seconds) * time.Second
 
-	_, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), timeOut)
-
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), timeOut)
 	if err != nil {
 		return false
 	}
-
+	conn.Close()
 	return true
 }
