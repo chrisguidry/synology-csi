@@ -834,10 +834,31 @@ func (service *DsmService) listISCSIVolumes(dsmIp string) (infos []*models.K8sVo
 			continue
 		}
 
+		// One LUN list answers every mapping, where a LunGet for each mapped
+		// LUN costs a request per volume on every lookup.
+		lunInfos, err := dsm.LunList()
+		if err != nil {
+			log.Errorf("[%s] Failed to list LUNs: %v", dsm.Ip, err)
+			listErr = errors.Join(listErr, fmt.Errorf("DSM[%s] failed to list LUNs: %w", dsm.Ip, err))
+			continue
+		}
+		luns := make(map[string]webapi.LunInfo, len(lunInfos))
+		for _, lun := range lunInfos {
+			luns[lun.Uuid] = lun
+		}
+
 		for _, target := range targetInfos {
 			// TODO: use target.ConnectedSessions to filter targets
 			for _, mapping := range target.MappedLuns {
-				lun, err := dsm.LunGet(mapping.LunUuid)
+				lun, listed := luns[mapping.LunUuid]
+				var err error
+				if !listed {
+					// The list can leave a mapped LUN out: one created after
+					// the list, one deleted after the target listing named
+					// it, or a type the list does not ask for. Only the
+					// DSM's answer for that LUN tells them apart.
+					lun, err = dsm.LunGet(mapping.LunUuid)
+				}
 				if errors.Is(err, utils.NoSuchLunError("")) {
 					// The LUN was deleted after the target listing named it.
 					// It is known not to exist, so the listing is still
