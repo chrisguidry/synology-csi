@@ -49,7 +49,14 @@ type DSM struct {
 	// timeout replaces DefaultRequestTimeout when it is set.
 	timeout time.Duration
 
-	sid string
+	// Every request reads the session id, and a re-login writes it, from
+	// concurrent CSI calls.
+	sessionMu sync.Mutex
+	sid       string
+	// loginMu lets one re-login run at a time. A DSM session ends for every
+	// request at once, and a login for each one would replace the session
+	// the one before it just made.
+	loginMu sync.Mutex
 
 	// A view from WithContext sends its requests with ctx, and reads the
 	// session and the client of root, the DSM it came from.
@@ -88,7 +95,29 @@ func (dsm *DSM) WithoutCancel() *DSM {
 
 // session is the session id the DSM's last login returned.
 func (dsm *DSM) session() string {
-	return dsm.shared().sid
+	shared := dsm.shared()
+	shared.sessionMu.Lock()
+	defer shared.sessionMu.Unlock()
+	return shared.sid
+}
+
+func (dsm *DSM) setSession(sid string) {
+	shared := dsm.shared()
+	shared.sessionMu.Lock()
+	defer shared.sessionMu.Unlock()
+	shared.sid = sid
+}
+
+// relogin logs in again unless another request already replaced the
+// session that expired.
+func (dsm *DSM) relogin(expired string) error {
+	shared := dsm.shared()
+	shared.loginMu.Lock()
+	defer shared.loginMu.Unlock()
+	if dsm.session() != expired {
+		return nil
+	}
+	return dsm.Login()
 }
 
 // shared is the DSM that holds the session and the client.
@@ -178,20 +207,26 @@ func (dsm *DSM) newHTTPClient() (*http.Client, error) {
 }
 
 func (dsm *DSM) sendRequest(data string, apiTemplate interface{}, params url.Values, cgiPath string) (Response, error) {
-	resp, err := dsm.sendRequestWithoutConnectionCheck(data, apiTemplate, params, cgiPath)
+	sid := dsm.session()
+	resp, err := dsm.send(sid, data, apiTemplate, params, cgiPath)
 	if err != nil && (resp.ErrorCode == 105 || resp.ErrorCode == 106 || resp.ErrorCode == 119) { // 105: WEBAPI_ERR_NO_PERMISSION, 106: session timeout, 119: WEBAPI_ERR_SID_NOT_FOUND
 		// Re-login
-		if err := dsm.Login(); err != nil {
+		if err := dsm.relogin(sid); err != nil {
 			return Response{}, fmt.Errorf("Failed to re-login to DSM: [%s]. err: %v", dsm.Ip, err)
 		}
 		log.Info("Re-login succeeded.")
-		return dsm.sendRequestWithoutConnectionCheck(data, apiTemplate, params, cgiPath)
+		return dsm.send(dsm.session(), data, apiTemplate, params, cgiPath)
 	}
 
 	return resp, err
 }
 
 func (dsm *DSM) sendRequestWithoutConnectionCheck(data string, apiTemplate interface{}, params url.Values, cgiPath string) (Response, error) {
+	return dsm.send(dsm.session(), data, apiTemplate, params, cgiPath)
+}
+
+// send makes one request on the session sid.
+func (dsm *DSM) send(sid string, data string, apiTemplate interface{}, params url.Values, cgiPath string) (Response, error) {
 	client, err := dsm.httpClient()
 	if err != nil {
 		return Response{}, err
@@ -227,7 +262,7 @@ func (dsm *DSM) sendRequestWithoutConnectionCheck(data string, apiTemplate inter
 		return Response{}, err
 	}
 
-	if sid := dsm.session(); sid != "" {
+	if sid != "" {
 		cookie := http.Cookie{Name: "id", Value: sid}
 		req.AddCookie(&cookie)
 	}
@@ -327,7 +362,7 @@ func (dsm *DSM) Login() error {
 	if !ok {
 		return fmt.Errorf("Failed to assert response to %T", &LoginResp{})
 	}
-	dsm.shared().sid = loginResp.Sid
+	dsm.setSession(loginResp.Sid)
 
 	return nil
 }
@@ -343,7 +378,7 @@ func (dsm *DSM) Logout() error {
 	if err != nil {
 		return err
 	}
-	dsm.shared().sid = ""
+	dsm.setSession("")
 
 	return nil
 }
