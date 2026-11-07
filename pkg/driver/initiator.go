@@ -19,11 +19,13 @@ limitations under the License.
 package driver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/SynologyOpenSource/synology-csi/pkg/utils/hostexec"
 	log "github.com/sirupsen/logrus"
@@ -49,8 +51,17 @@ const (
 	ISCSIPort = 3260
 )
 
+// iscsiadmTimeout stops an iscsiadm that iscsid never answers, so a stage
+// or an unstage fails and the kubelet calls again instead of waiting on it
+// forever. It is longer than a login to an unreachable portal takes to give
+// up under open-iscsi's default retries, so it cuts short no login that
+// could still succeed.
+const iscsiadmTimeout = 3 * time.Minute
+
 type tools struct {
 	executor hostexec.Executor
+	// commandTimeout replaces iscsiadmTimeout when it is set.
+	commandTimeout time.Duration
 }
 
 // NewTools creates a new tools wrapper for calling utilities with given executor
@@ -61,7 +72,15 @@ func NewTools(executor hostexec.Executor) tools {
 }
 
 func (t *tools) iscsiadm(cmdArgs ...string) utilexec.Cmd {
-	return t.executor.Command("iscsiadm", cmdArgs...)
+	timeout := iscsiadmTimeout
+	if t.commandTimeout != 0 {
+		timeout = t.commandTimeout
+	}
+	// The caller runs the command after this returns, so the timer, not a
+	// deferred cancel, ends the context.
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(timeout, cancel)
+	return t.executor.CommandContext(ctx, "iscsiadm", cmdArgs...)
 }
 
 // parseSession takes the raw stdout from the `iscsiadm -m session` command and encodes it into an iSCSI session type
