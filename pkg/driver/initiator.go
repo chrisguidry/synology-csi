@@ -262,6 +262,11 @@ func (t *tools) listSessionsByIqn(ctx context.Context, targetIqn string) (matche
 func (d *initiatorDriver) login(ctx context.Context, targetIqn string, portal string) error {
 	if d.tools.hasSession(ctx, targetIqn, portal) {
 		log.Infof("Session[%s] already exists.", targetIqn)
+		// A killed iscsiadm leaves its login running in iscsid, so the
+		// session can exist without the update below having run. Setting
+		// the startup again is harmless, and without it a host whose
+		// default is automatic logs in at boot before the kubelet asks.
+		d.setManualStartup(ctx, targetIqn, portal)
 		return nil
 	}
 
@@ -275,13 +280,19 @@ func (d *initiatorDriver) login(ctx context.Context, targetIqn string, portal st
 		return err
 	}
 
-	if err := d.tools.iscsiadm_update_node_startup(ctx, targetIqn, portal); err != nil {
-		log.Warnf("Failed to update target node.startup to manual: %v", err)
-	}
+	d.setManualStartup(ctx, targetIqn, portal)
 
 	log.Infof("Login target portal [%s], iqn [%s].", portal, targetIqn)
 
 	return nil
+}
+
+// setManualStartup keeps iscsid from logging in to the target at boot, so
+// only a stage logs the node in.
+func (d *initiatorDriver) setManualStartup(ctx context.Context, targetIqn, portal string) {
+	if err := d.tools.iscsiadm_update_node_startup(ctx, targetIqn, portal); err != nil {
+		log.Warnf("Failed to update target node.startup to manual: %v", err)
+	}
 }
 
 func (d *initiatorDriver) logout(ctx context.Context, targetIqn string, ip string) error {
