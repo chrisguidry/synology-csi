@@ -268,6 +268,24 @@ Create and apply VolumeSnapshotClasses with the properties you want.
     kubectl apply -f <volumesnapshotclass_yaml>
     ```
 
+## Metrics
+
+With `--metrics-address`, such as `--metrics-address=:8095`, the plugin serves
+Prometheus metrics at `/metrics` on that address:
+
+| Metric | Labels | What it counts |
+| ------ | ------ | -------------- |
+| `synology_csi_dsm_requests_total` | `dsm`, `api`, `method`, `outcome` | Requests sent to a DSM. `outcome` is `success`, `dsm_error`, `http_error`, `bad_response`, `timeout`, `canceled`, or `unreachable`. |
+| `synology_csi_dsm_reachable` | `dsm` | 1 when the DSM answered the last request sent to it, 0 when it did not. |
+| `synology_csi_calls_total` | `operation`, `code` | CSI calls answered, by gRPC code. |
+| `synology_csi_call_duration_seconds` | `operation` | Time until a CSI call returned. |
+| `synology_csi_build_info` | `version` | The driver's version, value 1. |
+
+The CSI `Probe` reports only that the plugin process is serving. A DSM that
+cannot be reached shows in `synology_csi_dsm_reachable`, so a NAS that
+reboots restarts no plugin. The gauge changes only when the plugin sends a
+request, so a plugin with nothing to do keeps the value of its last request.
+
 ## Building & Manually Installing
 
 By default, the CSI driver will pull the latest [image](https://hub.docker.com/r/synology/synology-csi) from Docker Hub.

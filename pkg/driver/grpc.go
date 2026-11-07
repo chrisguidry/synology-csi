@@ -92,7 +92,7 @@ func (s *nonBlockingGRPCServer) serve(endpoint string, ids csi.IdentityServer, c
 	}
 
 	opts := []grpc.ServerOption{
-		grpc.UnaryInterceptor(logGRPC),
+		grpc.ChainUnaryInterceptor(metricsInterceptor, logGRPC),
 	}
 	server := grpc.NewServer(opts...)
 	s.server = server

@@ -267,8 +267,14 @@ func (dsm *DSM) send(sid string, data string, apiTemplate interface{}, params ur
 		req.AddCookie(&cookie)
 	}
 
+	// Every request that reaches client.Do is counted once, under the
+	// outcome its last return sets.
+	outcome := outcomeSuccess
+	defer func() { dsm.recordRequest(params.Get("api"), params.Get("method"), outcome) }()
+
 	resp, err := client.Do(req)
 	if err != nil {
+		outcome = transportOutcome(err)
 		return Response{}, err
 	}
 	// The transport reuses a connection only when the body was read to the
@@ -283,6 +289,7 @@ func (dsm *DSM) send(sid string, data string, apiTemplate interface{}, params ur
 	if logger.WebapiDebug {
 		bodyText, err = ioutil.ReadAll(resp.Body)
 		if err != nil {
+			outcome = bodyOutcome(err)
 			return Response{}, err
 		}
 		s := string(bodyText)
@@ -290,6 +297,7 @@ func (dsm *DSM) send(sid string, data string, apiTemplate interface{}, params ur
 	}
 
 	if resp.StatusCode != 200 && resp.StatusCode != 302 {
+		outcome = outcomeHttpError
 		return Response{}, fmt.Errorf("Bad response status code: %d", resp.StatusCode)
 	}
 
@@ -304,12 +312,14 @@ func (dsm *DSM) send(sid string, data string, apiTemplate interface{}, params ur
 
 	if logger.WebapiDebug {
 		if err := json.Unmarshal(bodyText, &e); err != nil {
+			outcome = outcomeBadResponse
 			return Response{}, err
 		}
 	} else {
 		decoder := json.NewDecoder(resp.Body)
 
 		if err := decoder.Decode(&e); err != nil {
+			outcome = bodyOutcome(err)
 			return Response{}, err
 		}
 	}
@@ -318,11 +328,13 @@ func (dsm *DSM) send(sid string, data string, apiTemplate interface{}, params ur
 	outResp.StatusCode = resp.StatusCode
 
 	if !e.Success {
+		outcome = outcomeDsmError
 		return outResp, fmt.Errorf("DSM Api error. Error code:%d", outResp.ErrorCode)
 	}
 
 	if e.Data != nil {
 		if err := json.Unmarshal(e.Data, apiTemplate); err != nil {
+			outcome = outcomeBadResponse
 			return Response{}, err
 		}
 	}
