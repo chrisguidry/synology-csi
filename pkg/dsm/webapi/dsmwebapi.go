@@ -29,12 +29,12 @@ import (
 const DefaultRequestTimeout = 60 * time.Second
 
 type DSM struct {
-	Ip         string
-	Port       int
-	Username   string
-	Password   string
-	Https      bool
-	Controller string
+	Ip                 string
+	Port               int
+	Username           string
+	Password           string
+	Https              bool
+	Controller         string
 	TLSCACert          string
 	TLSServerName      string
 	InsecureSkipVerify bool

@@ -44,6 +44,8 @@ bin/synocli: bin FORCE
 
 .PHONY: test
 test:
+	@unformatted="$$(git ls-files '*.go' | xargs gofmt -l)"; \
+		if [ -n "$$unformatted" ]; then echo "gofmt needs to format:"; echo "$$unformatted"; exit 1; fi
 	go clean -testcache
 	go test -v ./test/...
 
