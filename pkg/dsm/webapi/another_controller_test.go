@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -30,13 +31,40 @@ func TestConcurrentCallsCanAskForTheOtherController(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			other, err := dsm.GetAnotherController()
+			other, err := dsm.GetAnotherController(context.Background())
 			if err != nil || other.Ip != "127.0.0.1" || other.Controller != "A" {
 				t.Errorf("GetAnotherController = (%+v, %v), want controller A at 127.0.0.1", other, err)
 			}
 		}()
 	}
 	wg.Wait()
+}
+
+// The other controller's requests carry the caller's context, so they stop
+// when the CSI call that asked for it is cancelled.
+func TestTheOtherControllerStopsWithItsCall(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	other, err := ucDSM(t).GetAnotherController(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cancel()
+
+	if other.Context().Err() == nil {
+		t.Error("the other controller's requests outlive the cancelled call")
+	}
+}
+
+// Asking for the other controller in a call that was already cancelled
+// fails at once instead of sending requests to the DSM.
+func TestACancelledCallGetsNoOtherController(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if other, err := ucDSM(t).GetAnotherController(ctx); err == nil {
+		t.Errorf("GetAnotherController = %+v in a cancelled call, want an error", other)
+	}
 }
 
 // A reachability check closes the connection it opened, so checking does
@@ -48,7 +76,7 @@ func TestAReachabilityCheckClosesItsConnection(t *testing.T) {
 	}
 	defer listener.Close()
 
-	if !CheckIpReachable("127.0.0.1", listener.Addr().(*net.TCPAddr).Port) {
+	if !CheckIpReachable(context.Background(), "127.0.0.1", listener.Addr().(*net.TCPAddr).Port) {
 		t.Fatal("CheckIpReachable reported a listening port unreachable")
 	}
 

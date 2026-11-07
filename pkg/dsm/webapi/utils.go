@@ -3,6 +3,7 @@
 package webapi
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -15,12 +16,17 @@ func (dsm *DSM) IsUC() bool {
 	return strings.Contains(dsm.FirmwareVer, "DSM UC")
 }
 
-func (dsm *DSM) GetAnotherController() (*DSM, error) {
+// GetAnotherController finds a reachable address of the other controller
+// of a UC pair. The DSM it returns, and the requests made to find it, carry
+// ctx, so they stop when the caller's CSI call ends.
+func (dsm *DSM) GetAnotherController(ctx context.Context) (*DSM, error) {
+	dsm = dsm.WithContext(ctx)
 	anotherDsm := &DSM{
-		Port:     dsm.Port,
-		Username: dsm.Username,
-		Password: dsm.Password,
-		Https:    dsm.Https,
+		ctx:                ctx,
+		Port:               dsm.Port,
+		Username:           dsm.Username,
+		Password:           dsm.Password,
+		Https:              dsm.Https,
 		TLSCACert:          dsm.TLSCACert,
 		TLSServerName:      dsm.TLSServerName,
 		InsecureSkipVerify: dsm.InsecureSkipVerify,
@@ -68,7 +74,7 @@ func (dsm *DSM) GetAnotherController() (*DSM, error) {
 				continue
 			}
 
-			if netIf.Status == "connected" && CheckIpReachable(netIf.Ip, anotherDsm.Port){
+			if netIf.Status == "connected" && CheckIpReachable(ctx, netIf.Ip, anotherDsm.Port) {
 				anotherDsm.Ip = netIf.Ip
 				return anotherDsm, nil
 			}
@@ -78,11 +84,11 @@ func (dsm *DSM) GetAnotherController() (*DSM, error) {
 	return nil, fmt.Errorf("Failed to get reachable network of another controller.")
 }
 
-func CheckIpReachable(ip string, port int) bool {
+func CheckIpReachable(ctx context.Context, ip string, port int) bool {
 	seconds := 5
-	timeOut := time.Duration(seconds) * time.Second
+	dialer := net.Dialer{Timeout: time.Duration(seconds) * time.Second}
 
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), timeOut)
+	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", ip, port))
 	if err != nil {
 		return false
 	}

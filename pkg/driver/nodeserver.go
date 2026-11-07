@@ -209,7 +209,7 @@ func (ns *nodeServer) getPortals(ctx context.Context, dsmIp string) []string {
 	}
 
 	if dsm.IsUC() && ns.tools.IsMultipathEnabled() {
-		dsm2, err := dsm.GetAnotherController()
+		dsm2, err := dsm.GetAnotherController(ctx)
 		if err != nil {
 			log.Errorf("[%s] UC failed to get another controller: %v", dsmIp, err)
 		} else {
