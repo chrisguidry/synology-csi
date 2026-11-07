@@ -42,7 +42,7 @@ type DSM struct {
 
 	// One client for each DSM, so requests reuse its connections. A new
 	// client for each request costs a TCP connection and a TLS handshake,
-	// and a listing makes one request for each LUN.
+	// and one CSI call can send the DSM several requests.
 	clientOnce sync.Once
 	client     *http.Client
 	clientErr  error

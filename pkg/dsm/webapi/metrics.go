@@ -17,8 +17,10 @@ var dsmRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 }, []string{"dsm", "api", "method", "outcome"})
 
 // dsmReachable reports whether a DSM answered the last request sent to it.
-// It replaces a health check that fails the plugin: a NAS that reboots
-// should raise an alert, not restart every node's plugin.
+// DSM health is a metric rather than part of Probe, because whatever calls
+// Probe treats a failure as the plugin being down: a NAS that reboots would
+// restart or stall every node's plugin, which cannot bring the DSM back. As
+// a metric it raises an alert instead.
 var dsmReachable = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 	Name: "synology_csi_dsm_reachable",
 	Help: "1 when the DSM answered the last request sent to it, 0 when it did not.",

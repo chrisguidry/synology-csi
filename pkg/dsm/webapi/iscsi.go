@@ -111,9 +111,10 @@ func errCodeMapping(errCode int, oriErr error) error {
 }
 
 // LunList returns every LUN of the listed types in one response; the API
-// takes no offset or limit. The types include every one the driver creates
-// (FILE, ADV, BLUN, BLUN_THICK), and a volume lookup reads a mapped LUN the
-// list leaves out on its own.
+// takes no offset or limit. The API leaves out every type the request does
+// not name, so a type missing from the list hides the driver's own LUNs of
+// that type from every lookup. A volume lookup reads a mapped LUN the list
+// leaves out on its own.
 func (dsm *DSM) LunList() ([]LunInfo, error) {
 	params := url.Values{}
 	params.Add("api", "SYNO.Core.ISCSI.LUN")
