@@ -6,6 +6,7 @@ on:
       - 'go.*'
       - '**/*.go'
       - 'Dockerfile'
+      - 'docker-bake.hcl'
       - 'Makefile'
   pull_request:
     paths:
@@ -13,6 +14,7 @@ on:
       - 'go.*'
       - '**/*.go'
       - 'Dockerfile'
+      - 'docker-bake.hcl'
       - 'Makefile'
 
 # Read-only unless a job asks for more.

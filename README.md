@@ -298,6 +298,7 @@ If you want to use images you built locally for installation, edit all files und
 - To run unit tests, execute `make test`.
 - To build a docker image, run `./scripts/deploy.sh build`.
  Afterwards, run `docker images` to check the newly created image.
+- To build this fork's image the way CI does, run `docker buildx bake synology-csi --set '*.platform=linux/amd64' --load`. `docker-bake.hcl` holds the platforms, the tags, and the OCI labels.
 
 ### Installation
 
