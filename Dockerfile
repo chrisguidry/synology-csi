@@ -7,7 +7,6 @@
 # Each base image is pinned to a digest, because a tag can be pushed again
 # with other contents. Dependabot moves the tag and the digest together.
 FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
-LABEL stage=synobuilder
 
 RUN apk add --no-cache alpine-sdk
 WORKDIR /go/src/synok8scsiplugin
@@ -27,16 +26,6 @@ RUN env GOARCH=$(echo "$TARGETPLATFORM" | cut -f2 -d/) \
 
 ############## Final stage ##############
 FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
-
-ARG IMAGE_VERSION=dev
-ARG IMAGE_RELEASE=1
-LABEL name="synology-csi" \
-      maintainer="Synology" \
-      vendor="Synology Inc." \
-      version="${IMAGE_VERSION}" \
-      release="${IMAGE_RELEASE}" \
-      summary="Synology CSI driver for Kubernetes" \
-      description="A Container Storage Interface (CSI) driver for Synology NAS."
 
 # Runtime tools. mkfs, fsck, and resize run inside this container, so these
 # packages decide which fsType values a StorageClass can use. Alpine publishes

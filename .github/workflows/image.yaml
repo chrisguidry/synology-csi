@@ -48,6 +48,11 @@ jobs:
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The gha layer cache in docker-bake.hcl needs the runner's cache
+      # token, which only actions can read. This step copies it into the
+      # environment of the run steps below.
+      - name: Expose the runner's cache token
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       - name: Log in to ghcr.io
         if: github.event_name != 'pull_request'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -56,29 +61,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Image metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/synology-csi
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha
-            type=raw,value=${{ steps.build.outputs.tag }},enable={{is_default_branch}}
-
+      # docker-bake.hcl holds the platforms, the tags, and the OCI labels and
+      # annotations, so this build and `docker buildx bake` on a laptop make
+      # the same image. SOURCE_DATE_EPOCH makes the image config's creation
+      # time the commit time, which leaves the layer cache alone.
       - name: Build and push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            IMAGE_VERSION=${{ steps.meta.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        env:
+          BUILD: ${{ steps.build.outputs.tag }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.number }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            VERSION="pr-$PR_NUMBER" docker buildx bake synology-csi
+            exit 0
+          fi
+          SOURCE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          REVISION="$(git rev-parse HEAD)"
+          VERSION="$REF_NAME"
+          CREATED="$(git log -1 --format=%cI)"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          SHA_TAG="sha-$(git rev-parse --short=7 HEAD)"
+          BUILD_TAG=""
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            BUILD_TAG="$BUILD"
+          fi
+          export SOURCE REVISION VERSION CREATED SOURCE_DATE_EPOCH SHA_TAG BUILD_TAG
+          docker buildx bake synology-csi --push --sbom=true
 
       - name: Set up Flux
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -94,7 +103,18 @@ jobs:
           BUILD: ${{ steps.build.outputs.tag }}
         run: |
           yq -i '(.images[] | select(.name == "synology/synology-csi")).newTag = strenv(BUILD)' deploy/kubernetes/v1.20/kustomization.yaml
+          # The same repository and commit keys as the image, with the
+          # artifact's own title and description. The licenses, url, and
+          # vendor values repeat docker-bake.hcl.
           flux push artifact "oci://ghcr.io/${{ github.repository_owner }}/synology-csi-deploy:$BUILD" \
             --path deploy/kubernetes/v1.20 \
             --source "${{ github.server_url }}/${{ github.repository }}" \
-            --revision "$BUILD@sha1:${{ github.sha }}"
+            --revision "$BUILD@sha1:${{ github.sha }}" \
+            --annotations "org.opencontainers.image.created=$(git log -1 --format=%cI)" \
+            --annotations "org.opencontainers.image.title=synology-csi-deploy" \
+            --annotations "org.opencontainers.image.description=A kustomize base that deploys the Synology CSI driver." \
+            --annotations "org.opencontainers.image.documentation=https://github.com/chrisguidry/synology-csi#readme" \
+            --annotations "org.opencontainers.image.url=https://github.com/chrisguidry/synology-csi" \
+            --annotations "org.opencontainers.image.licenses=Apache-2.0" \
+            --annotations "org.opencontainers.image.vendor=Chris Guidry" \
+            --annotations "org.opencontainers.image.version=$BUILD"
