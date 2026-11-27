@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	osexec "os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -105,8 +106,8 @@ func (t *tools) runTimedWith(ctx context.Context, command string, cmdArgs []stri
 //
 //	tcp: [3] 192.0.2.10:3260,1 iqn.2000-01.com.synology:nas.pvc-abc123 (non-flash)
 //
-// Any line that does not have that shape is skipped, so a stray diagnostic
-// can never be taken for a session or index past the end of a field.
+// Any line without that full shape is skipped, so no line can index past
+// the end of a field.
 func parseSessions(lines string) []iscsiSession {
 	var sessions []iscsiSession
 	for _, entry := range strings.Split(lines, "\n") {
@@ -161,7 +162,12 @@ func (t *tools) iscsiadm_session(ctx context.Context) []iscsiSession {
 		if ok && exitErr.ExitStatus() == 21 { // iscsiadm: No active sessions
 			log.Info("No active iscsi session found.")
 		} else {
-			log.Errorf("Failed to run iscsiadm session: %v", err)
+			var osExitErr *osexec.ExitError
+			if errors.As(err, &osExitErr) {
+				log.Errorf("Failed to run iscsiadm session: %v: %s", err, strings.TrimSpace(string(osExitErr.Stderr)))
+			} else {
+				log.Errorf("Failed to run iscsiadm session: %v", err)
+			}
 		}
 		return []iscsiSession{}
 	}

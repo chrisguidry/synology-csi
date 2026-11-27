@@ -56,11 +56,12 @@ func TestParseSessions(t *testing.T) {
 }
 
 // Parallel unstages make iscsiadm print warnings beside the sessions, and
-// the warnings are on stderr, which the session list never reads.
+// the warnings are on stderr, which the session list never reads. The stray
+// stderr line has a session's shape, so only reading stdout keeps it out.
 func TestSessionListIgnoresIscsiadmStderr(t *testing.T) {
 	e := &recordingExecutor{
 		sessionOutput:  realSessionLine + "\n",
-		sessionWarning: "iscsiadm: could not read session targetname: 5\n",
+		sessionWarning: "tcp: [9] 192.0.2.99:3260,1 iqn.2000-01.com.synology:nas.stray (non-flash)\n",
 	}
 	tools := NewTools(e)
 

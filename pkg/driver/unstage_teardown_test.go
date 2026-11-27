@@ -50,7 +50,7 @@ func (e *recordingExecutor) Command(cmd string, args ...string) utilexec.Cmd {
 		OutputScript: []testingexec.FakeAction{
 			func() ([]byte, []byte, error) {
 				if e.fail != "" && strings.Contains(line, e.fail) {
-					return []byte("boom"), nil, fmt.Errorf("command failed")
+					return nil, []byte("boom"), fmt.Errorf("command failed")
 				}
 				return []byte(out), []byte(warning), nil
 			},
