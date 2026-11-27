@@ -74,16 +74,27 @@ func waitForDevicePathToExist(path string) error {
 	}
 }
 
-// for unstage, resize volume
-func (t *tools) getExistedVolumeMountPath(ctx context.Context, targetIqn string, mappingIndex int) string {
-	paths := []string{}
-
-	sessions := t.listSessionsByIqn(ctx, targetIqn)
-	for _, session := range sessions {
-		paths = append(paths, fmt.Sprintf("%sip-%s-iscsi-%s-lun-%d", "/dev/disk/by-path/", session.Portal, targetIqn, mappingIndex))
+// getExistedVolumeMountPath finds the device of a LUN by the names udev gives
+// it under /dev/disk/by-path, one per portal, for unstage and resize. It reads
+// no session list: a list that misses a live session, or fails, would hide
+// the device, and unstage would then log out without flushing it. iSCSI
+// target names hold no glob metacharacters, so the name needs no escaping.
+func (t *tools) getExistedVolumeMountPath(targetIqn string, mappingIndex int) string {
+	pattern := filepath.Join(t.byPathDir(), fmt.Sprintf("ip-*-iscsi-%s-lun-%d", targetIqn, mappingIndex))
+	paths, err := filepath.Glob(pattern)
+	if err != nil {
+		log.Errorf("Failed to list devices matching %s: %v", pattern, err)
+		return ""
 	}
 
 	return getVolumeMountPath(paths)
+}
+
+func (t *tools) byPathDir() string {
+	if t.devDiskByPath != "" {
+		return t.devDiskByPath
+	}
+	return "/dev/disk/by-path"
 }
 
 func getExistedNvmeDevPath(subsysNqn string, uuid string) string {
@@ -309,14 +320,14 @@ func (ns *nodeServer) loginTarget(ctx context.Context, volumeId string) (paths [
 	return paths, iqn, lun, nil
 }
 
-func (ns *nodeServer) logoutTarget(ctx context.Context, k8sVolume *models.K8sVolumeRespSpec) {
+func (ns *nodeServer) logoutTarget(ctx context.Context, k8sVolume *models.K8sVolumeRespSpec) error {
 	if k8sVolume == nil {
-		return
+		return nil
 	}
 
 	// Assume target and lun 1-1 mapping
 	mappingIndex := k8sVolume.Target.MappedLuns[0].MappingIndex
-	volumeMountPath := ns.tools.getExistedVolumeMountPath(ctx, k8sVolume.Target.Iqn, mappingIndex)
+	volumeMountPath := ns.tools.getExistedVolumeMountPath(k8sVolume.Target.Iqn, mappingIndex)
 
 	// Push anything still in the page cache out to the LUN before the session
 	// goes away. A filesystem volume was already flushed by the Unmount above,
@@ -347,7 +358,7 @@ func (ns *nodeServer) logoutTarget(ctx context.Context, k8sVolume *models.K8sVol
 		}
 	}
 
-	ns.Initiator.logout(ctx, k8sVolume.Target.Iqn, k8sVolume.DsmIp)
+	return ns.Initiator.logout(ctx, k8sVolume.Target.Iqn, k8sVolume.DsmIp)
 }
 
 // reportFailedFlush logs a failed pre-logout flush as an error, or only as
@@ -843,7 +854,12 @@ func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 	}
 
 	if k8sVolume.Protocol == utils.ProtocolIscsi {
-		ns.logoutTarget(ctx, k8sVolume)
+		// A session still logged in after the unstage reports success is
+		// never logged out, so the error makes kubelet call again.
+		if err := ns.logoutTarget(ctx, k8sVolume); err != nil {
+			return nil, status.Errorf(codes.Internal,
+				"Failed to log out of target[%s] of volume[%s]: %v", k8sVolume.Target.Iqn, volumeId, err)
+		}
 	} else if k8sVolume.Protocol == utils.ProtocolNvme {
 		ns.logoutNVMeSubsystem(ctx, k8sVolume.Subsystem.Nqn)
 	}
@@ -1145,7 +1161,7 @@ func (ns *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandV
 
 		// Assume target and lun 1-1 mapping
 		mappingIndex := k8sVolume.Target.MappedLuns[0].MappingIndex
-		volumeMountPath = ns.tools.getExistedVolumeMountPath(ctx, k8sVolume.Target.Iqn, mappingIndex)
+		volumeMountPath = ns.tools.getExistedVolumeMountPath(k8sVolume.Target.Iqn, mappingIndex)
 		if volumeMountPath == "" {
 			return nil, status.Error(codes.Internal, "Can't get volume mount path")
 		}

@@ -45,12 +45,27 @@ type iscsiSession struct {
 	Id       int32
 	Portal   string
 	Iqn      string
-	Name     string
 }
 
 const (
 	ISCSIPort = 3260
 )
+
+// iscsiadm's exit statuses, from open-iscsi's iscsi_err.h.
+const (
+	// iscsiErrSessNotFound is ISCSI_ERR_SESS_NOT_FOUND: the session ended
+	// while iscsiadm worked on it, as when it ends during a logout.
+	iscsiErrSessNotFound = 2
+	// iscsiErrNoObjsFound is ISCSI_ERR_NO_OBJS_FOUND: no session or record
+	// matches, such as a logout of a target with no session.
+	iscsiErrNoObjsFound = 21
+)
+
+// isExitStatus reports whether err is a host command's exit with status.
+func isExitStatus(err error, status int) bool {
+	var exitErr utilexec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitStatus() == status
+}
 
 // hostCommandTimeout stops an iscsiadm or nvme command that never returns,
 // as when iscsid stops answering its socket or a target stops answering. Each
@@ -66,6 +81,8 @@ type tools struct {
 	executor hostexec.Executor
 	// commandTimeout replaces hostCommandTimeout when it is set.
 	commandTimeout time.Duration
+	// devDiskByPath replaces /dev/disk/by-path when it is set.
+	devDiskByPath string
 }
 
 // NewTools creates a new tools wrapper for calling utilities with given executor
@@ -107,7 +124,8 @@ func (t *tools) runTimedWith(ctx context.Context, command string, cmdArgs []stri
 //	tcp: [3] 192.0.2.10:3260,1 iqn.2000-01.com.synology:nas.pvc-abc123 (non-flash)
 //
 // Any line without that full shape is skipped, so no line can index past
-// the end of a field.
+// the end of a field. The target name is not checked for a colon, because
+// eui. and naa. target names have none.
 func parseSessions(lines string) []iscsiSession {
 	var sessions []iscsiSession
 	for _, entry := range strings.Split(lines, "\n") {
@@ -140,16 +158,11 @@ func parseSession(line string) (iscsiSession, bool) {
 	if !hasTag || portal == "" {
 		return iscsiSession{}, false
 	}
-	nameParts := strings.Split(e[3], ":")
-	if len(nameParts) < 2 {
-		return iscsiSession{}, false
-	}
 	return iscsiSession{
 		Protocol: protocol,
 		Id:       int32(id),
 		Portal:   portal,
 		Iqn:      e[3],
-		Name:     nameParts[1],
 	}, true
 }
 
@@ -159,7 +172,7 @@ func (t *tools) iscsiadm_session(ctx context.Context) []iscsiSession {
 	out, err := t.runTimedStdout(ctx, "iscsiadm", "-m", "session")
 	if err != nil {
 		exitErr, ok := err.(utilexec.ExitError)
-		if ok && exitErr.ExitStatus() == 21 { // iscsiadm: No active sessions
+		if ok && exitErr.ExitStatus() == iscsiErrNoObjsFound { // `-m session` with no sessions logged in
 			log.Info("No active iscsi session found.")
 		} else {
 			var osExitErr *osexec.ExitError
@@ -287,18 +300,6 @@ func (t *tools) hasSession(ctx context.Context, targetIqn string, portal string)
 	return false
 }
 
-func (t *tools) listSessionsByIqn(ctx context.Context, targetIqn string) (matchedSessions []iscsiSession) {
-	sessions := t.iscsiadm_session(ctx)
-
-	for _, s := range sessions {
-		if targetIqn == s.Iqn {
-			matchedSessions = append(matchedSessions, s)
-		}
-	}
-
-	return matchedSessions
-}
-
 func (d *initiatorDriver) login(ctx context.Context, targetIqn string, portal string) error {
 	if d.tools.hasSession(ctx, targetIqn, portal) {
 		log.Infof("Session[%s] already exists.", targetIqn)
@@ -338,21 +339,28 @@ func (d *initiatorDriver) setManualStartup(ctx context.Context, targetIqn, porta
 func (d *initiatorDriver) logout(ctx context.Context, targetIqn string, ip string) error {
 	portal := fmt.Sprintf("%s:%d", ip, ISCSIPort)
 
-	if d.tools.hasSession(ctx, targetIqn, "") {
-		if err := d.tools.iscsiadm_logout(ctx, targetIqn); err != nil {
-			log.Errorf("Failed in logout of the target.\nTarget [%s], Portal [%s], Err[%v]",
-				targetIqn, portal, err)
-			return err
-		}
-		log.Infof("Logout target portal [%s], iqn [%s].", portal, targetIqn)
-	} else {
+	// The logout runs whether or not the session list shows a session,
+	// because only the logout's exit status says reliably whether one is
+	// logged in: a listing that misses a live session would skip the logout,
+	// and the unstage would then report a session that is still logged in as
+	// gone.
+	err := d.tools.iscsiadm_logout(ctx, targetIqn)
+	switch {
+	case isExitStatus(err, iscsiErrNoObjsFound), isExitStatus(err, iscsiErrSessNotFound):
 		log.Infof("Session[%s] doesn't exist.", targetIqn)
+	case err != nil:
+		// The record stays: deleting it would leave the session logged in
+		// with no record to log it out by.
+		log.Errorf("Failed in logout of the target.\nTarget [%s], Portal [%s], Err[%v]",
+			targetIqn, portal, err)
+		return err
+	default:
+		log.Infof("Logout target portal [%s], iqn [%s].", portal, targetIqn)
 	}
 
-	// Deliberately outside the session check: the case that leaves iscsid
-	// retrying forever is exactly the one where the session is already gone but
-	// the record is not, so returning early on "no session" would skip the
-	// cleanup precisely when it is needed.
+	// Removed after a logout of a session that was already gone too: that is
+	// the case where the record outlives its session, and iscsid then retries
+	// the login forever.
 	if err := d.tools.iscsiadm_delete_node(ctx, targetIqn, portal); err != nil {
 		// Not fatal. The volume is detached either way; what is left behind is
 		// a record that makes noise rather than one that breaks anything.

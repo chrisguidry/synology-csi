@@ -13,7 +13,6 @@ var realSession = iscsiSession{
 	Id:       3,
 	Portal:   "192.0.2.10:3260",
 	Iqn:      "iqn.2000-01.com.synology:nas.pvc-abc123",
-	Name:     "nas.pvc-abc123",
 }
 
 // iscsiadm prints warnings in the same stream as the sessions, and a warning
@@ -24,7 +23,6 @@ func TestParseSessions(t *testing.T) {
 		Id:       4,
 		Portal:   "192.0.2.11:3260",
 		Iqn:      "iqn.2000-01.com.synology:nas.pvc-def456",
-		Name:     "nas.pvc-def456",
 	}
 	for _, c := range []struct {
 		name  string
@@ -40,7 +38,12 @@ func TestParseSessions(t *testing.T) {
 			"iscsiadm: could not read session targetname: 5\n" +
 			"tcp: [4] 192.0.2.11:3260,1 iqn.2000-01.com.synology:nas.pvc-def456 (non-flash)\n",
 			[]iscsiSession{realSession, second}},
-		{"four fields and no colon in the name", "tcp: [3] 192.0.2.10:3260,1 nocolon\n", nil},
+		{"an EUI-64 target name", "tcp: [5] 192.0.2.10:3260,1 eui.02004567A425678D (non-flash)\n",
+			[]iscsiSession{{Protocol: "tcp", Id: 5, Portal: "192.0.2.10:3260", Iqn: "eui.02004567A425678D"}}},
+		{"an NAA target name", "tcp: [6] 192.0.2.10:3260,1 naa.52004567BA64678D (non-flash)\n",
+			[]iscsiSession{{Protocol: "tcp", Id: 6, Portal: "192.0.2.10:3260", Iqn: "naa.52004567BA64678D"}}},
+		{"no target name", "tcp: [3] 192.0.2.10:3260,1\n", nil},
+		{"a portal with no tag", "tcp: [3] 192.0.2.10:3260 iqn.2000-01.com.synology:nas.pvc-abc123\n", nil},
 		{"empty output", "", nil},
 		{"blank lines", "\n\n", nil},
 		{"garbage", "!!! not a session at all, really\n\x00\x01\n", nil},
