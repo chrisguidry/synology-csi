@@ -25,15 +25,17 @@ type recordingExecutor struct {
 	fail string
 	// sessionOutput is what `iscsiadm -m session` reports.
 	sessionOutput string
+	// sessionWarning is what `iscsiadm -m session` writes to stderr.
+	sessionWarning string
 }
 
 func (e *recordingExecutor) Command(cmd string, args ...string) utilexec.Cmd {
 	line := strings.TrimSpace(cmd + " " + strings.Join(args, " "))
 	e.ran = append(e.ran, line)
 
-	out := ""
+	out, warning := "", ""
 	if cmd == "iscsiadm" && len(args) >= 2 && args[0] == "-m" && args[1] == "session" {
-		out = e.sessionOutput
+		out, warning = e.sessionOutput, e.sessionWarning
 	}
 
 	fake := &testingexec.FakeCmd{
@@ -42,7 +44,15 @@ func (e *recordingExecutor) Command(cmd string, args ...string) utilexec.Cmd {
 				if e.fail != "" && strings.Contains(line, e.fail) {
 					return []byte("boom"), nil, fmt.Errorf("command failed")
 				}
-				return []byte(out), nil, nil
+				return []byte(out + warning), nil, nil
+			},
+		},
+		OutputScript: []testingexec.FakeAction{
+			func() ([]byte, []byte, error) {
+				if e.fail != "" && strings.Contains(line, e.fail) {
+					return []byte("boom"), nil, fmt.Errorf("command failed")
+				}
+				return []byte(out), []byte(warning), nil
 			},
 		},
 	}

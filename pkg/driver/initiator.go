@@ -81,47 +81,81 @@ func (t *tools) iscsiadm(ctx context.Context, cmdArgs ...string) ([]byte, error)
 // runTimed runs a host command and returns its combined output. The command
 // is killed when ctx ends or hostCommandTimeout passes, whichever is first.
 func (t *tools) runTimed(ctx context.Context, command string, cmdArgs ...string) ([]byte, error) {
+	return t.runTimedWith(ctx, command, cmdArgs, utilexec.Cmd.CombinedOutput)
+}
+
+// runTimedStdout is runTimed for a command whose stdout is parsed, so its
+// stderr is kept out of the result.
+func (t *tools) runTimedStdout(ctx context.Context, command string, cmdArgs ...string) ([]byte, error) {
+	return t.runTimedWith(ctx, command, cmdArgs, utilexec.Cmd.Output)
+}
+
+func (t *tools) runTimedWith(ctx context.Context, command string, cmdArgs []string, collect func(utilexec.Cmd) ([]byte, error)) ([]byte, error) {
 	timeout := hostCommandTimeout
 	if t.commandTimeout != 0 {
 		timeout = t.commandTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return t.executor.CommandContext(ctx, command, cmdArgs...).CombinedOutput()
+	return collect(t.executor.CommandContext(ctx, command, cmdArgs...))
 }
 
-// parseSession takes the raw stdout from the `iscsiadm -m session` command and encodes it into an iSCSI session type
+// parseSessions encodes the stdout of `iscsiadm -m session` into iSCSI
+// sessions. A session line has the form
+//
+//	tcp: [3] 192.0.2.10:3260,1 iqn.2000-01.com.synology:nas.pvc-abc123 (non-flash)
+//
+// Any line that does not have that shape is skipped, so a stray diagnostic
+// can never be taken for a session or index past the end of a field.
 func parseSessions(lines string) []iscsiSession {
-	entries := strings.Split(strings.TrimSpace(lines), "\n")
-	r := strings.NewReplacer("[", "",
-		"]", "")
-
 	var sessions []iscsiSession
-	for _, entry := range entries {
-		e := strings.Fields(entry)
-		if len(e) < 4 {
-			continue
+	for _, entry := range strings.Split(lines, "\n") {
+		if s, ok := parseSession(entry); ok {
+			sessions = append(sessions, s)
 		}
-		protocol := strings.Split(e[0], ":")[0]
-		id := r.Replace(e[1])
-		id64, _ := strconv.ParseInt(id, 10, 32)
-		portal := strings.Split(e[2], ",")[0]
-
-		s := iscsiSession{
-			Protocol: protocol,
-			Id:       int32(id64),
-			Portal:   portal,
-			Iqn:      e[3],
-			Name:     strings.Split(e[3], ":")[1],
-		}
-		sessions = append(sessions, s)
 	}
-
 	return sessions
 }
 
+func parseSession(line string) (iscsiSession, bool) {
+	e := strings.Fields(line)
+	if len(e) < 4 {
+		return iscsiSession{}, false
+	}
+	protocol, hasColon := strings.CutSuffix(e[0], ":")
+	if !hasColon || protocol == "" {
+		return iscsiSession{}, false
+	}
+	idText, bracketed := strings.CutPrefix(e[1], "[")
+	idText, closed := strings.CutSuffix(idText, "]")
+	if !bracketed || !closed {
+		return iscsiSession{}, false
+	}
+	id, err := strconv.ParseInt(idText, 10, 32)
+	if err != nil {
+		return iscsiSession{}, false
+	}
+	portal, _, hasTag := strings.Cut(e[2], ",")
+	if !hasTag || portal == "" {
+		return iscsiSession{}, false
+	}
+	nameParts := strings.Split(e[3], ":")
+	if len(nameParts) < 2 {
+		return iscsiSession{}, false
+	}
+	return iscsiSession{
+		Protocol: protocol,
+		Id:       int32(id),
+		Portal:   portal,
+		Iqn:      e[3],
+		Name:     nameParts[1],
+	}, true
+}
+
 func (t *tools) iscsiadm_session(ctx context.Context) []iscsiSession {
-	out, err := t.iscsiadm(ctx, "-m", "session")
+	// Only stdout is parsed: iscsiadm writes warnings to stderr, and they
+	// are not sessions.
+	out, err := t.runTimedStdout(ctx, "iscsiadm", "-m", "session")
 	if err != nil {
 		exitErr, ok := err.(utilexec.ExitError)
 		if ok && exitErr.ExitStatus() == 21 { // iscsiadm: No active sessions
