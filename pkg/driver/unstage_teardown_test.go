@@ -23,6 +23,8 @@ type recordingExecutor struct {
 	// fail makes any command whose joined form contains this substring return
 	// an error.
 	fail string
+	// failStatus, when set, is the exit status of the failing command.
+	failStatus int
 	// sessionOutput is what `iscsiadm -m session` reports.
 	sessionOutput string
 	// sessionWarning is what `iscsiadm -m session` writes to stderr.
@@ -38,11 +40,16 @@ func (e *recordingExecutor) Command(cmd string, args ...string) utilexec.Cmd {
 		out, warning = e.sessionOutput, e.sessionWarning
 	}
 
+	failure := error(fmt.Errorf("command failed"))
+	if e.failStatus != 0 {
+		failure = testingexec.FakeExitError{Status: e.failStatus}
+	}
+
 	fake := &testingexec.FakeCmd{
 		CombinedOutputScript: []testingexec.FakeAction{
 			func() ([]byte, []byte, error) {
 				if e.fail != "" && strings.Contains(line, e.fail) {
-					return []byte("boom"), nil, fmt.Errorf("command failed")
+					return []byte("boom"), nil, failure
 				}
 				return []byte(out + warning), nil, nil
 			},
@@ -50,7 +57,7 @@ func (e *recordingExecutor) Command(cmd string, args ...string) utilexec.Cmd {
 		OutputScript: []testingexec.FakeAction{
 			func() ([]byte, []byte, error) {
 				if e.fail != "" && strings.Contains(line, e.fail) {
-					return nil, []byte("boom"), fmt.Errorf("command failed")
+					return nil, []byte("boom"), failure
 				}
 				return []byte(out), []byte(warning), nil
 			},
@@ -110,16 +117,15 @@ func TestLogoutRemovesTheNodeRecord(t *testing.T) {
 // already gone, so an early return on "no session" would skip the cleanup
 // exactly when it matters.
 func TestNodeRecordIsRemovedEvenWithNoSession(t *testing.T) {
-	e := &recordingExecutor{sessionOutput: ""} // no sessions at all
+	// iscsiadm's logout of a target with no session exits with
+	// ISCSI_ERR_NO_OBJS_FOUND.
+	e := &recordingExecutor{sessionOutput: "", fail: "--logout", failStatus: iscsiErrNoObjsFound}
 	if err := newTestInitiator(e).logout(context.Background(), testIqn, "1.2.3.4"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if e.find("-o delete") < 0 {
 		t.Errorf("expected the stale node record to be removed with no session present, ran: %v", e.ran)
-	}
-	if e.find("--logout") >= 0 {
-		t.Errorf("did not expect a logout when there is no session, ran: %v", e.ran)
 	}
 }
 
